@@ -97,19 +97,19 @@ const INDICATOR_NAMES: Record<string, string> = {
 };
 
 const WEIGHT_LABELS: Record<number, string> = {
-  1: "Rất cao",
-  2: "Cao",
+  5: "Rất cao",
+  4: "Cao",
   3: "Trung bình",
-  4: "Thấp",
-  5: "Rất thấp",
+  2: "Thấp",
+  1: "Rất thấp",
 };
 
 const WEIGHT_COLORS: Record<number, string> = {
-  1: "hsl(0, 72%, 48%)",
-  2: "hsl(25, 90%, 50%)",
+  5: "hsl(0, 72%, 48%)",
+  4: "hsl(25, 90%, 50%)",
   3: "hsl(45, 90%, 50%)",
-  4: "hsl(142, 55%, 40%)",
-  5: "hsl(215, 20%, 60%)",
+  2: "hsl(142, 55%, 40%)",
+  1: "hsl(215, 20%, 60%)",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -426,7 +426,7 @@ export default function AdminPage() {
                 <CardTitle className="text-base font-semibold">Trọng số rủi ro mặc định</CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
                   Điều chỉnh mức độ ưu tiên của từng chỉ số trong tính điểm rủi ro tổng hợp.
-                  Mức 1 = quan trọng nhất, Mức 5 = ít quan trọng nhất.
+                  Mức 5 = quan trọng nhất, Mức 1 = ít quan trọng nhất.
                 </p>
               </div>
               <Button
