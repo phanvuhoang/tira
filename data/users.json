@@ -2,7 +2,7 @@
   {
     "id": "admin-001",
     "username": "admin",
-    "password_hash": "$2b$10$Ho7f0pUvUKcNNgKbvLEQ9OK2OGiEd9BMD.1/41tUfxpaD0Msp4CTm",
+    "password_hash": "$2b$10$KDzjIkPzNcFMhB2hEb3xe.iV88Io0XVgO2sMSs.8XTe74wiZp3Gw6",
     "email": "admin@tira.local",
     "role": "admin",
     "created_at": "2026-04-01T02:12:12.515Z"
@@ -18,7 +18,7 @@
   {
     "id": "admin-002",
     "username": "superadmin",
-    "password_hash": "$2b$10$Xjiuxm58P78d73W/FHs6pOx85GhGzzXIcRwdRK3Ngxu90rqh8LtX2",
+    "password_hash": "$2b$10$pa0jyl1EZ.vYu2ihGsIb8u2tnq9hmtbJS6SPioJSbqKH7fvEIvOG6",
     "email": "superadmin@tira.local",
     "role": "admin",
     "created_at": "2026-04-01T07:59:58.786Z"

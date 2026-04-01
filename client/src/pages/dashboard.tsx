@@ -714,15 +714,19 @@ export default function Dashboard() {
     setAiReportError(null);
     setAiSaved(false);
     try {
-      const res = await apiRequest("POST", "/api/generate-report", {
-        ticker,
-        report_type: reportType,
-        years,
-        comparisons,
-        percentile_low: percentileLow,
-        percentile_high: percentileHigh,
-        report_types: aiReportTypes,
-        ai_model: aiModel,
+      const res = await fetch(`${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/generate-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker,
+          report_type: reportType,
+          years,
+          comparisons,
+          percentile_low: percentileLow,
+          percentile_high: percentileHigh,
+          report_types: aiReportTypes,
+          ai_model: aiModel,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -735,10 +739,16 @@ export default function Dashboard() {
           setAiReportError(errMsg);
         }
       } else {
-        setAiReportContent(data.content || data.report || JSON.stringify(data));
+        // Backend returns { reports: { financial: "...", tax: "..." } }
+        const reports = data.reports || {};
+        const parts: string[] = [];
+        if (reports.financial) parts.push("# Báo cáo Phân tích Tài chính\n\n" + reports.financial);
+        if (reports.tax) parts.push("# Báo cáo Phân tích Rủi ro Thuế\n\n" + reports.tax);
+        setAiReportContent(parts.join("\n\n---\n\n") || data.content || JSON.stringify(data));
       }
     } catch (err: any) {
-      setAiReportError("Không thể kết nối đến server. Vui lòng thử lại.");
+      console.error("AI Report error:", err);
+      setAiReportError(`Lỗi: ${err.message || "Không thể kết nối đến server. Vui lòng thử lại."}`);
     } finally {
       setAiGenerating(false);
     }
@@ -1142,9 +1152,9 @@ export default function Dashboard() {
           onClick={() => setScoringPanelOpen(!scoringPanelOpen)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors w-full"
           style={{
-            background: scoringPanelOpen ? "hsl(183, 85%, 12%)" : "hsl(214, 10%, 97%)",
-            borderColor: scoringPanelOpen ? "hsl(183, 85%, 30%)" : "hsl(214, 10%, 85%)",
-            color: scoringPanelOpen ? "hsl(183, 85%, 55%)" : "hsl(215, 20%, 40%)",
+            background: scoringPanelOpen ? "hsl(144, 50%, 12%)" : "hsl(214, 10%, 97%)",
+            borderColor: scoringPanelOpen ? "hsl(144, 97%, 27%)" : "hsl(214, 10%, 85%)",
+            color: scoringPanelOpen ? "hsl(144, 77%, 50%)" : "hsl(215, 20%, 40%)",
           }}
         >
           <SlidersHorizontal className="w-4 h-4" />
@@ -1236,7 +1246,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                       <th
                         key={`${year}-median`}
                         className="text-center py-2 px-2 font-medium min-w-[80px] text-xs"
-                        style={{ color: "hsl(183, 85%, 30%)" }}
+                        style={{ color: "hsl(144, 97%, 27%)" }}
                       >
                         Trung vị
                       </th>
@@ -1293,7 +1303,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                                 </span>
                               </td>
                               <td key={`${year}-median`} className="py-1.5 px-1 text-center">
-                                <span className="heatmap-cell inline-block text-xs font-medium" style={{ backgroundColor: "hsl(183, 85%, 30%, 0.08)", color: "hsl(183, 85%, 30%)" }}>
+                                <span className="heatmap-cell inline-block text-xs font-medium" style={{ backgroundColor: "hsl(183, 85%, 30%, 0.08)", color: "hsl(144, 97%, 27%)" }}>
                                   {fmtVal(ind.id, yearMedian)}
                                 </span>
                               </td>
@@ -1348,7 +1358,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                     ]}
                   />
                   <Legend iconSize={10} wrapperStyle={{ fontSize: "12px" }} />
-                  <Bar dataKey="target" name={target.company.ma_ck} fill="hsl(183, 85%, 30%)" radius={[0, 2, 2, 0]} barSize={10} />
+                  <Bar dataKey="target" name={target.company.ma_ck} fill="hsl(144, 97%, 27%)" radius={[0, 2, 2, 0]} barSize={10} />
                   <Bar dataKey="median" name="Trung vị" fill="hsl(25, 90%, 50%)" radius={[0, 2, 2, 0]} barSize={10} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1491,8 +1501,8 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                   <Radar
                     name="Điểm rủi ro"
                     dataKey="score"
-                    stroke="hsl(183, 85%, 30%)"
-                    fill="hsl(183, 85%, 30%)"
+                    stroke="hsl(144, 97%, 27%)"
+                    fill="hsl(144, 97%, 27%)"
                     fillOpacity={0.2}
                     strokeWidth={2}
                   />
@@ -1536,7 +1546,7 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                       name={trend.name}
                       stroke={
                         [
-                          "hsl(183, 85%, 30%)",
+                          "hsl(144, 97%, 27%)",
                           "hsl(25, 90%, 50%)",
                           "hsl(142, 55%, 40%)",
                           "hsl(262, 55%, 50%)",
@@ -1579,7 +1589,7 @@ function ComparisonView({ result }: { result: AnalysisResult }) {
   ];
 
   const colors = [
-    "hsl(183, 85%, 30%)",
+    "hsl(144, 97%, 27%)",
     "hsl(25, 90%, 50%)",
     "hsl(262, 55%, 50%)",
     "hsl(142, 55%, 40%)",
@@ -1848,7 +1858,7 @@ function DetailView({ result }: { result: AnalysisResult }) {
                               )}
                               {ind.industry_median !== null && ind.industry_median !== undefined && (
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                  Trung vị ngành: <span className="font-medium" style={{ color: "hsl(183, 85%, 30%)" }}>{fmtVal(ind.id, ind.industry_median)}</span>
+                                  Trung vị ngành: <span className="font-medium" style={{ color: "hsl(144, 97%, 27%)" }}>{fmtVal(ind.id, ind.industry_median)}</span>
                                 </p>
                               )}
                               <div className="flex items-center gap-2 mt-2">
@@ -1971,7 +1981,7 @@ function AnalysisView({ result }: { result: AnalysisResult }) {
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Dưới đây là phân tích chi tiết cho từng chỉ số, giải thích tại sao một chỉ số được đánh giá
-            ở mức "Rủi ro" hoặc "Chú ý", cùng với các gợi ý diễn giải từ hướng dẫn của Deloitte.
+            ở mức "Rủi ro" hoặc "Chú ý", cùng với các gợi ý diễn giải từ hướng dẫn của TIRA.
           </p>
         </CardContent>
       </Card>
@@ -2041,7 +2051,7 @@ function AnalysisView({ result }: { result: AnalysisResult }) {
                         <span>Giá trị: <strong style={{ color: getDualFontColor(ind.risk_level_2 ?? ind.risk_level) }}>{fmtVal(ind.id, ind.company_value)}</strong></span>
                         {ind.industry_range && <span>Ngành: {ind.industry_range}</span>}
                         {ind.industry_median !== null && ind.industry_median !== undefined && (
-                          <span>Trung vị: <strong style={{ color: "hsl(183, 85%, 30%)" }}>{fmtVal(ind.id, ind.industry_median)}</strong></span>
+                          <span>Trung vị: <strong style={{ color: "hsl(144, 97%, 27%)" }}>{fmtVal(ind.id, ind.industry_median)}</strong></span>
                         )}
                       </div>
                     </div>
@@ -2565,7 +2575,7 @@ function RiskScoringEditor({
     <Card className="mt-4" data-testid="risk-scoring-editor">
       <CardHeader className="pb-3">
         <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <SlidersHorizontal className="w-4 h-4" style={{ color: "hsl(183, 85%, 40%)" }} />
+          <SlidersHorizontal className="w-4 h-4" style={{ color: "hsl(144, 77%, 35%)" }} />
           Điểm rủi ro tổng hợp
         </CardTitle>
         <p className="text-xs text-muted-foreground">
@@ -2637,7 +2647,7 @@ function RiskScoringEditor({
             <div key={groupName}>
               <div
                 className="text-[11px] font-bold uppercase tracking-wider px-2 py-1.5 rounded mb-2"
-                style={{ background: "hsl(183, 85%, 8%)", color: "hsl(183, 85%, 55%)" }}
+                style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}
               >
                 {groupName}
               </div>

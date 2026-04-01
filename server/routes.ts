@@ -166,26 +166,34 @@ async function callAnthropicModel(prompt: string, modelId: string): Promise<stri
   if (!anthropicClient) {
     throw new Error("ANTHROPIC_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.");
   }
-  const msg = await anthropicClient.messages.create({
-    model: modelId,
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const block = msg.content[0];
-  if (block.type === "text") return block.text;
-  return "";
+  try {
+    const msg = await anthropicClient.messages.create({
+      model: modelId,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const block = msg.content[0];
+    if (block.type === "text") return block.text;
+    return "";
+  } catch (err: any) {
+    throw new Error(`Anthropic API error: ${err.message || err}`);
+  }
 }
 
 async function callDeepSeekModel(prompt: string, modelId: string): Promise<string> {
   if (!deepseekClient) {
     throw new Error("DEEPSEEK_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.");
   }
-  const completion = await deepseekClient.chat.completions.create({
-    model: modelId,
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 4096,
-  });
-  return completion.choices[0]?.message?.content || "";
+  try {
+    const completion = await deepseekClient.chat.completions.create({
+      model: modelId,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 4096,
+    });
+    return completion.choices[0]?.message?.content || "";
+  } catch (err: any) {
+    throw new Error(`DeepSeek API error: ${err.message || err}`);
+  }
 }
 
 async function generateReportText(
@@ -193,7 +201,7 @@ async function generateReportText(
   aiModel: string
 ): Promise<string> {
   if (aiModel === "deepseek") {
-    return callDeepSeekModel(prompt, "deepseek-reasoner");
+    return callDeepSeekModel(prompt, "deepseek-chat");
   }
   // default: claude-haiku
   return callAnthropicModel(prompt, "claude-3-5-haiku-20241022");

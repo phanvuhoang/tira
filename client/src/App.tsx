@@ -95,7 +95,7 @@ function Sidebar({ user, onLogout }: SidebarProps) {
         {/* Logo */}
         <div className="px-5 py-5 border-b border-sidebar-border">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[hsl(183,85%,30%)] to-[hsl(183,85%,22%)] flex items-center justify-center">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[hsl(144,97%,27%)] to-[hsl(144,97%,20%)] flex items-center justify-center">
               <Shield className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -145,9 +145,9 @@ function Sidebar({ user, onLogout }: SidebarProps) {
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-sidebar-accent/30">
             <div
               className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-              style={{ background: "hsl(183, 85%, 22%)" }}
+              style={{ background: "hsl(144, 97%, 20%)" }}
             >
-              <User className="w-3.5 h-3.5" style={{ color: "hsl(183, 85%, 65%)" }} />
+              <User className="w-3.5 h-3.5" style={{ color: "hsl(144, 77%, 55%)" }} />
             </div>
             <div className="flex-1 min-w-0">
               <p

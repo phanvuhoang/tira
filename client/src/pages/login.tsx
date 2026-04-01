@@ -96,7 +96,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     <div
       className="min-h-screen flex items-center justify-center p-4"
       style={{
-        background: "linear-gradient(135deg, hsl(220, 25%, 10%) 0%, hsl(220, 20%, 14%) 50%, hsl(183, 30%, 12%) 100%)",
+        background: "linear-gradient(135deg, hsl(220, 25%, 10%) 0%, hsl(220, 20%, 14%) 50%, hsl(144, 30%, 12%) 100%)",
       }}
       data-testid="login-page"
     >
@@ -106,7 +106,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
             style={{
-              background: "linear-gradient(135deg, hsl(183, 85%, 30%) 0%, hsl(183, 85%, 22%) 100%)",
+              background: "linear-gradient(135deg, hsl(144, 97%, 27%) 0%, hsl(144, 97%, 20%) 100%)",
               boxShadow: "0 8px 32px hsl(183, 85%, 30%, 0.4)",
             }}
           >
@@ -185,7 +185,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   style={{
                     background: "hsl(220, 15%, 20%)",
                     color: "hsl(215, 20%, 70%)",
-                    borderLeft: "3px solid hsl(183, 85%, 35%)",
+                    borderLeft: "3px solid hsl(144, 97%, 30%)",
                   }}
                 >
                   Vui lòng liên hệ quản trị viên để đặt lại mật khẩu.
@@ -193,7 +193,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 <Button
                   variant="ghost"
                   className="w-full"
-                  style={{ color: "hsl(183, 85%, 55%)" }}
+                  style={{ color: "hsl(144, 77%, 50%)" }}
                   onClick={() => switchMode("login")}
                 >
                   ← Quay lại đăng nhập
@@ -275,7 +275,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   className="w-full font-semibold"
                   disabled={loading}
                   style={{
-                    background: "linear-gradient(135deg, hsl(183, 85%, 30%) 0%, hsl(183, 85%, 24%) 100%)",
+                    background: "linear-gradient(135deg, hsl(144, 97%, 27%) 0%, hsl(144, 97%, 22%) 100%)",
                     color: "white",
                     border: "none",
                   }}
@@ -291,7 +291,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     type="button"
                     data-testid="link-register"
                     onClick={() => switchMode("register")}
-                    style={{ color: "hsl(183, 85%, 55%)" }}
+                    style={{ color: "hsl(144, 77%, 50%)" }}
                     className="hover:underline"
                   >
                     Chưa có tài khoản? Đăng ký
@@ -407,7 +407,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   className="w-full font-semibold"
                   disabled={loading}
                   style={{
-                    background: "linear-gradient(135deg, hsl(183, 85%, 30%) 0%, hsl(183, 85%, 24%) 100%)",
+                    background: "linear-gradient(135deg, hsl(144, 97%, 27%) 0%, hsl(144, 97%, 22%) 100%)",
                     color: "white",
                     border: "none",
                   }}
@@ -423,7 +423,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     type="button"
                     data-testid="link-back-to-login"
                     onClick={() => switchMode("login")}
-                    style={{ color: "hsl(183, 85%, 55%)" }}
+                    style={{ color: "hsl(144, 77%, 50%)" }}
                     className="hover:underline"
                   >
                     Đã có tài khoản? Đăng nhập

@@ -1,13 +1,13 @@
 # TIRA - Tax Index Risk Analysis
 
-Ứng dụng phân tích rủi ro thuế cho các công ty niêm yết tại Việt Nam, dựa trên 24+ chỉ số TIRA từ phương pháp luận của Deloitte.
+Ứng dụng phân tích rủi ro thuế cho các công ty niêm yết tại Việt Nam, dựa trên 24+ chỉ số TIRA.
 
 ## Tính năng chính
 
 - **Phân tích rủi ro thuế**: Tính toán 24+ chỉ số TIRA cho bất kỳ công ty niêm yết nào
 - **So sánh ngành**: Benchmark với các công ty cùng ngành thông qua phân vị (P35-P65)
 - **Dashboard trực quan**: Bảng nhiệt, biểu đồ radar, trend lines, so sánh side-by-side
-- **Phân tích chi tiết**: Giải thích ý nghĩa từng chỉ số rủi ro dựa trên hướng dẫn Deloitte
+- **Phân tích chi tiết**: Giải thích ý nghĩa từng chỉ số rủi ro dựa trên hướng dẫn TIRA
 - **Công ty tùy chỉnh**: Nhập dữ liệu thủ công cho công ty không niêm yết
 - **Upload dữ liệu**: Cập nhật dữ liệu mới bằng file Excel/CSV
 - **Xuất báo cáo**: Tải kết quả phân tích dưới dạng PPTX
