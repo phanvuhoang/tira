@@ -6,6 +6,8 @@ import path from "path";
 const JWT_SECRET = process.env.JWT_SECRET || "tira-secret-key-change-me";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const ADMIN2_USERNAME = process.env.ADMIN2_USERNAME || "superadmin";
+const ADMIN2_PASSWORD = process.env.ADMIN2_PASSWORD || "tira@2026";
 
 export type UserRole = "admin" | "editor" | "viewer";
 
@@ -28,20 +30,40 @@ export function loadUsers() {
       users = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
     }
   } catch {}
-  // Ensure primary admin exists
-  const adminExists = users.find(u => u.username === ADMIN_USERNAME);
-  if (!adminExists) {
-    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+  // Ensure primary admin exists and password is always in sync with env
+  const adminIdx = users.findIndex(u => u.username === ADMIN_USERNAME);
+  if (adminIdx === -1) {
     users.push({
       id: "admin-001",
       username: ADMIN_USERNAME,
-      password_hash: hash,
+      password_hash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
       email: "admin@tira.local",
       role: "admin",
       created_at: new Date().toISOString(),
     });
-    saveUsers();
+  } else {
+    // Always re-sync password from env on startup
+    users[adminIdx].password_hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    users[adminIdx].role = "admin";
   }
+
+  // Ensure secondary admin exists
+  const admin2Idx = users.findIndex(u => u.username === ADMIN2_USERNAME);
+  if (admin2Idx === -1) {
+    users.push({
+      id: "admin-002",
+      username: ADMIN2_USERNAME,
+      password_hash: bcrypt.hashSync(ADMIN2_PASSWORD, 10),
+      email: "superadmin@tira.local",
+      role: "admin",
+      created_at: new Date().toISOString(),
+    });
+  } else {
+    users[admin2Idx].password_hash = bcrypt.hashSync(ADMIN2_PASSWORD, 10);
+    users[admin2Idx].role = "admin";
+  }
+
+  saveUsers();
 }
 
 function saveUsers() {
