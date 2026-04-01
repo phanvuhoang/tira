@@ -9,6 +9,15 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -32,6 +41,9 @@ import {
   ChevronUp,
   FileText,
   X,
+  Loader2,
+  Sparkles,
+  Save,
 } from "lucide-react";
 import {
   BarChart,
@@ -503,6 +515,14 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState("heatmap");
   const [isExporting, setIsExporting] = useState(false);
+  const [aiReportOpen, setAiReportOpen] = useState(false);
+  const [aiReportTypes, setAiReportTypes] = useState<string[]>(["financial", "tax"]);
+  const [aiModel, setAiModel] = useState("claude-haiku");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiReportContent, setAiReportContent] = useState<string | null>(null);
+  const [aiReportError, setAiReportError] = useState<string | null>(null);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiSaved, setAiSaved] = useState(false);
 
   const params = useMemo(() => {
     return getHashParams();
@@ -683,6 +703,63 @@ export default function Dashboard() {
     }
   }, [result, summaryStats]);
 
+  const handleGenerateAiReport = useCallback(async () => {
+    if (!result) return;
+    setAiGenerating(true);
+    setAiReportContent(null);
+    setAiReportError(null);
+    setAiSaved(false);
+    try {
+      const res = await apiRequest("POST", "/api/generate-report", {
+        ticker,
+        report_type: reportType,
+        years,
+        comparisons,
+        percentile_low: percentileLow,
+        percentile_high: percentileHigh,
+        report_types: aiReportTypes,
+        ai_model: aiModel,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.error || "Lỗi tạo báo cáo";
+        if (errMsg.toLowerCase().includes("api_key") || errMsg.toLowerCase().includes("api key")) {
+          setAiReportError(
+            "Vui lòng cấu hình ANTHROPIC_API_KEY hoặc DEEPSEEK_API_KEY trong environment variables để sử dụng tính năng này."
+          );
+        } else {
+          setAiReportError(errMsg);
+        }
+      } else {
+        setAiReportContent(data.content || data.report || JSON.stringify(data));
+      }
+    } catch (err: any) {
+      setAiReportError("Không thể kết nối đến server. Vui lòng thử lại.");
+    } finally {
+      setAiGenerating(false);
+    }
+  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiModel]);
+
+  const handleSaveAiReport = useCallback(async () => {
+    if (!result || !aiReportContent) return;
+    setAiSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/reports/save", {
+        ticker,
+        report_type: aiReportTypes.join(","),
+        name: `Báo cáo AI - ${ticker} (${new Date().toLocaleDateString("vi-VN")})`,
+        content: aiReportContent,
+      });
+      if (res.ok) {
+        setAiSaved(true);
+      }
+    } catch (err) {
+      // silent fail
+    } finally {
+      setAiSaving(false);
+    }
+  }, [result, ticker, aiReportContent, aiReportTypes]);
+
   if (!ticker && !isCustom) {
     return (
       <div className="p-8 text-center">
@@ -753,19 +830,166 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-        {/* Export Button */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExport}
-          disabled={isExporting}
-          data-testid="button-export"
-          className="gap-2"
-        >
-          <Download className="w-4 h-4" />
-          {isExporting ? "Đang xuất..." : "Tải báo cáo (PPTX)"}
-        </Button>
+        {/* Export Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={isExporting}
+            data-testid="button-export"
+            className="gap-2"
+          >
+            <Download className="w-4 h-4" />
+            {isExporting ? "Đang xuất..." : "Tải báo cáo (PPTX)"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setAiReportOpen(true); setAiReportContent(null); setAiReportError(null); setAiSaved(false); }}
+            data-testid="button-ai-report"
+            className="gap-2 border-primary/50 text-primary hover:bg-primary/10"
+          >
+            <Sparkles className="w-4 h-4" />
+            Tạo báo cáo AI
+          </Button>
+        </div>
       </div>
+
+      {/* AI Report Dialog */}
+      <Dialog open={aiReportOpen} onOpenChange={setAiReportOpen}>
+        <DialogContent className="max-w-2xl w-full" data-testid="dialog-ai-report">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              Tạo báo cáo AI
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Report type checkboxes */}
+            <div>
+              <p className="text-sm font-semibold mb-2">Loại báo cáo</p>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    id="ai-financial"
+                    checked={aiReportTypes.includes("financial")}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setAiReportTypes((prev) => [...prev.filter((t) => t !== "financial"), "financial"]);
+                      } else {
+                        setAiReportTypes((prev) => prev.filter((t) => t !== "financial"));
+                      }
+                    }}
+                    data-testid="checkbox-financial"
+                  />
+                  <Label htmlFor="ai-financial" className="cursor-pointer">Báo cáo tài chính</Label>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    id="ai-tax"
+                    checked={aiReportTypes.includes("tax")}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setAiReportTypes((prev) => [...prev.filter((t) => t !== "tax"), "tax"]);
+                      } else {
+                        setAiReportTypes((prev) => prev.filter((t) => t !== "tax"));
+                      }
+                    }}
+                    data-testid="checkbox-tax"
+                  />
+                  <Label htmlFor="ai-tax" className="cursor-pointer">Báo cáo rủi ro thuế</Label>
+                </label>
+              </div>
+            </div>
+
+            {/* AI Model selector */}
+            <div>
+              <p className="text-sm font-semibold mb-2">Mô hình AI</p>
+              <Select value={aiModel} onValueChange={setAiModel}>
+                <SelectTrigger className="w-full" data-testid="select-ai-model">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-haiku">Claude Haiku (mặc định)</SelectItem>
+                  <SelectItem value="deepseek-reasoner">DeepSeek Reasoner</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Generate button */}
+            <Button
+              className="w-full gap-2"
+              onClick={handleGenerateAiReport}
+              disabled={aiGenerating || aiReportTypes.length === 0}
+              data-testid="button-generate-report"
+            >
+              {aiGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Đang tạo báo cáo...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Tạo báo cáo
+                </>
+              )}
+            </Button>
+
+            {/* Error message */}
+            {aiReportError && (
+              <div
+                className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm"
+                data-testid="ai-report-error"
+              >
+                {aiReportError}
+              </div>
+            )}
+
+            {/* Report content */}
+            {aiReportContent && (
+              <div className="space-y-3">
+                <div
+                  className="overflow-y-auto max-h-64 bg-accent/20 rounded-lg p-4 text-sm whitespace-pre-wrap"
+                  data-testid="ai-report-content"
+                >
+                  {aiReportContent}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveAiReport}
+                    disabled={aiSaving || aiSaved}
+                    data-testid="button-save-report"
+                    className="gap-2"
+                  >
+                    {aiSaving ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    {aiSaved ? "Đã lưu" : "Lưu báo cáo"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExport}
+                    disabled={isExporting}
+                    data-testid="button-export-ai-pptx"
+                    className="gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Xuất PPTX
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* KPI Summary Cards */}
       {summaryStats && (
@@ -879,6 +1103,7 @@ export default function Dashboard() {
           <TabsTrigger value="comparison" data-testid="tab-comparison">So sánh</TabsTrigger>
           <TabsTrigger value="detail" data-testid="tab-detail">Chi tiết</TabsTrigger>
           <TabsTrigger value="analysis" data-testid="tab-analysis">Phân tích</TabsTrigger>
+          <TabsTrigger value="risk-heatmap" data-testid="tab-risk-heatmap">Biểu đồ nhiệt</TabsTrigger>
         </TabsList>
 
         <TabsContent value="heatmap" className="mt-4">
@@ -899,6 +1124,10 @@ export default function Dashboard() {
 
         <TabsContent value="analysis" className="mt-4">
           <AnalysisView result={result} />
+        </TabsContent>
+
+        <TabsContent value="risk-heatmap" className="mt-4">
+          <RiskHeatmapView result={result} />
         </TabsContent>
       </Tabs>
     </div>
@@ -1912,6 +2141,229 @@ function AnalysisView({ result }: { result: AnalysisResult }) {
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ========== RISK HEATMAP VIEW ========== */
+function riskIntensity(indicator: TiraIndicator): number {
+  let score = 0;
+  if (indicator.risk_level_1 === "red") score += 0.5;
+  if (indicator.risk_level_2 === "red") score += 0.5;
+  return score;
+}
+
+function intensityColor(score: number): string {
+  if (score === 0) return "hsl(142, 55%, 90%)"; // light green
+  if (score <= 0.25) return "hsl(80, 60%, 85%)"; // yellow-green
+  if (score <= 0.5) return "hsl(45, 90%, 80%)"; // yellow
+  if (score <= 0.75) return "hsl(25, 90%, 75%)"; // orange
+  return "hsl(0, 72%, 70%)"; // red
+}
+
+function RiskHeatmapView({ result }: { result: AnalysisResult }) {
+  const { target } = result;
+  const years = target.years;
+
+  // Build grouped structure across all years
+  const groupedIndicators = useMemo(() => {
+    const groupMap = new Map<string, string[]>(); // group -> indicator IDs
+    const firstYear = years[0];
+    if (!firstYear) return [];
+    const firstYearInds = target.indicators[firstYear] || [];
+    for (const ind of firstYearInds) {
+      const ids = groupMap.get(ind.group) || [];
+      if (!ids.includes(ind.id)) ids.push(ind.id);
+      groupMap.set(ind.group, ids);
+    }
+    return Array.from(groupMap.entries());
+  }, [target, years]);
+
+  // Build a lookup: indicatorId -> name
+  const indicatorNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const yr of years) {
+      for (const ind of (target.indicators[yr] || [])) {
+        m[ind.id] = ind.name;
+      }
+    }
+    return m;
+  }, [target, years]);
+
+  // Build lookup: year -> indicatorId -> TiraIndicator
+  const indicatorByYearId = useMemo(() => {
+    const m: Record<string, Record<string, TiraIndicator>> = {};
+    for (const yr of years) {
+      m[yr] = {};
+      for (const ind of (target.indicators[yr] || [])) {
+        m[yr][ind.id] = ind;
+      }
+    }
+    return m;
+  }, [target, years]);
+
+  return (
+    <div className="space-y-4" data-testid="risk-heatmap-view">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">
+            Biểu đồ nhiệt rủi ro - {target.company.ma_ck}
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Màu sắc thể hiện mức độ rủi ro tổng hợp: xanh = an toàn, đỏ = rủi ro cao theo RR1 và RR2.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {/* Legend */}
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Mức độ rủi ro:</span>
+            {[
+              { label: "An toàn", color: "hsl(142, 55%, 90%)" },
+              { label: "Rủi ro nhẹ", color: "hsl(45, 90%, 80%)" },
+              { label: "Rủi ro trung bình", color: "hsl(25, 90%, 75%)" },
+              { label: "Rủi ro cao", color: "hsl(0, 72%, 70%)" },
+            ].map((item, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block w-4 h-4 rounded border border-border/30"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className="text-xs text-muted-foreground">{item.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="table-risk-heatmap">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-2 px-3 font-medium text-muted-foreground min-w-[220px] sticky left-0 bg-card z-10">
+                    Chỉ số
+                  </th>
+                  {years.map((year) => (
+                    <th
+                      key={year}
+                      className="text-center py-2 px-3 font-medium text-muted-foreground min-w-[100px]"
+                    >
+                      {year}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {groupedIndicators.map(([groupName, indicatorIds]) => (
+                  <>
+                    <tr key={`group-${groupName}`}>
+                      <td
+                        colSpan={years.length + 1}
+                        className="py-2 px-3 text-xs font-bold uppercase tracking-wider text-primary bg-primary/5 sticky left-0"
+                      >
+                        {groupName}
+                      </td>
+                    </tr>
+                    {indicatorIds.map((indId) => (
+                      <tr key={indId} className="border-b border-border/40 hover:bg-accent/20">
+                        <td className="py-1.5 px-3 sticky left-0 bg-card z-10">
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[10px] font-mono px-1 py-0 shrink-0">
+                              {indId}
+                            </Badge>
+                            <span className="truncate max-w-[160px]" title={indicatorNames[indId]}>
+                              {indicatorNames[indId]}
+                            </span>
+                          </div>
+                        </td>
+                        {years.map((year) => {
+                          const ind = indicatorByYearId[year]?.[indId];
+                          if (!ind) {
+                            return (
+                              <td
+                                key={year}
+                                className="py-1.5 px-3 text-center"
+                                style={{ backgroundColor: "hsl(214, 10%, 96%)" }}
+                              >
+                                <span className="text-muted-foreground/40 text-[10px]">N/A</span>
+                              </td>
+                            );
+                          }
+                          const score = riskIntensity(ind);
+                          const bgColor = intensityColor(score);
+                          return (
+                            <td
+                              key={year}
+                              className="py-1.5 px-3 text-center"
+                              style={{ backgroundColor: bgColor }}
+                              data-testid={`heatmap-cell-${indId}-${year}`}
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="cursor-help">
+                                    <div
+                                      className="text-[11px] font-semibold"
+                                      style={{
+                                        color:
+                                          score >= 0.5
+                                            ? "hsl(0, 60%, 30%)"
+                                            : score > 0
+                                            ? "hsl(25, 70%, 30%)"
+                                            : "hsl(142, 55%, 30%)",
+                                      }}
+                                    >
+                                      {fmtVal(indId, ind.company_value)}
+                                    </div>
+                                    <div className="text-[9px] mt-0.5 text-foreground/50">
+                                      {score === 0
+                                        ? "An toàn"
+                                        : score <= 0.5
+                                        ? "RR1 hoặc RR2"
+                                        : "Rủi ro cao"}
+                                    </div>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="text-xs max-w-[200px]">
+                                  <p className="font-semibold">{ind.name}</p>
+                                  <p>Năm: {year}</p>
+                                  <p>Giá trị: {fmtVal(indId, ind.company_value)}</p>
+                                  <p>
+                                    RR1:{" "}
+                                    <span
+                                      style={{
+                                        color:
+                                          ind.risk_level_1 === "red"
+                                            ? "hsl(0,72%,48%)"
+                                            : "hsl(142,55%,40%)",
+                                      }}
+                                    >
+                                      {ind.risk_level_1 === "red" ? "Rủi ro" : "An toàn"}
+                                    </span>
+                                  </p>
+                                  <p>
+                                    RR2:{" "}
+                                    <span
+                                      style={{
+                                        color:
+                                          ind.risk_level_2 === "red"
+                                            ? "hsl(0,72%,48%)"
+                                            : "hsl(142,55%,40%)",
+                                      }}
+                                    >
+                                      {ind.risk_level_2 === "red" ? "Rủi ro" : "An toàn"}
+                                    </span>
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

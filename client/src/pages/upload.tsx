@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Loader2,
+  Download,
 } from "lucide-react";
 
 export default function UploadPage() {
@@ -90,6 +91,31 @@ export default function UploadPage() {
             Upload file Excel (.xlsx) có cấu trúc tương tự file dữ liệu gốc
           </p>
         </div>
+
+        {/* Template download */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <Download className="w-4 h-4 text-primary" />
+              Tải template nhập liệu
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Tải file Excel mẫu để nhập dữ liệu đúng định dạng yêu cầu. File template bao gồm các sheet
+              <strong> financial_full</strong> và <strong>general_data</strong> với cấu trúc cột chuẩn.
+            </p>
+            <a
+              href="/api/template/download"
+              download
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              data-testid="btn-download-template"
+            >
+              <Download className="w-4 h-4" />
+              Tải template Excel
+            </a>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="pb-3">

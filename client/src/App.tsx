@@ -10,6 +10,7 @@ import Home from "@/pages/home";
 import Dashboard from "@/pages/dashboard";
 import UploadPage from "@/pages/upload";
 import CustomCompany from "@/pages/custom-company";
+import ReportHistory from "@/pages/history";
 import { useState } from "react";
 import {
   BarChart3,
@@ -19,6 +20,7 @@ import {
   Shield,
   Menu,
   X,
+  FileText,
 } from "lucide-react";
 
 function Sidebar() {
@@ -30,6 +32,7 @@ function Sidebar() {
     { href: "/dashboard", label: "Dashboard", icon: Shield },
     { href: "/custom", label: "Công ty mới", icon: PlusCircle },
     { href: "/upload", label: "Tải dữ liệu", icon: Upload },
+    { href: "/history", label: "Lịch sử", icon: FileText },
   ];
 
   const isActive = (href: string) => {
@@ -124,6 +127,7 @@ function AppLayout() {
           <Route path="/dashboard" component={Dashboard} />
           <Route path="/custom" component={CustomCompany} />
           <Route path="/upload" component={UploadPage} />
+          <Route path="/history" component={ReportHistory} />
           <Route component={NotFound} />
         </Switch>
       </main>

@@ -1,33 +1,226 @@
 import type { Express, Request, Response } from "express";
 import type { Server } from "http";
 import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { v4 as uuidv4 } from "uuid";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { storage } from "./storage";
 import { calculateTiraIndicators } from "./tira-engine";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
+// ─────────────────────────────────────────────
+// AI clients (only initialised when keys present)
+// ─────────────────────────────────────────────
+const anthropicClient = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+const deepseekClient = process.env.DEEPSEEK_API_KEY
+  ? new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: "https://api.deepseek.com",
+    })
+  : null;
+
+// ─────────────────────────────────────────────
+// Report history – JSON file persistence
+// ─────────────────────────────────────────────
+const HISTORY_FILE = path.resolve(process.cwd(), "data", "report_history.json");
+
+interface ReportRecord {
+  id: string;
+  name: string;
+  ticker: string;
+  created_at: string;
+  report_type: string;
+  content: string;
+  analysis_params: Record<string, any>;
+}
+
+function loadHistory(): ReportRecord[] {
+  try {
+    if (fs.existsSync(HISTORY_FILE)) {
+      return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf-8")) as ReportRecord[];
+    }
+  } catch {
+    // ignore parse errors, start fresh
+  }
+  return [];
+}
+
+function saveHistory(records: ReportRecord[]): void {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(records, null, 2), "utf-8");
+}
+
+// In-memory cache (loaded once on startup, kept in sync on writes)
+let reportHistory: ReportRecord[] = loadHistory();
+
+// ─────────────────────────────────────────────
+// Helper: run the same analysis logic as /api/analyze
+// ─────────────────────────────────────────────
+function runAnalysis(
+  ticker: string,
+  reportType: string,
+  years: string[],
+  comparisons: string[],
+  pLow: number,
+  pHigh: number
+) {
+  const company = storage.getCompany(ticker);
+  if (!company) return null;
+
+  const finData = storage.getFinancialData(ticker, reportType);
+  if (!finData) return null;
+
+  const availableYears = Object.keys(finData).sort().reverse();
+  const selectedYears = years.length > 0 ? years : availableYears.slice(0, 3);
+
+  // Target TIRA indicators
+  const targetResult: Record<string, any> = {};
+  for (const year of selectedYears) {
+    const currentData = finData[year];
+    if (!currentData) continue;
+    const prevYear = String(parseInt(year) - 1);
+    const previousData = finData[prevYear] || null;
+
+    const industryData = storage.getIndustryFinancialData(
+      company.nganh_2 || "",
+      year,
+      reportType
+    );
+    const prevIndustryData = storage.getIndustryFinancialData(
+      company.nganh_2 || "",
+      prevYear,
+      reportType
+    );
+
+    targetResult[year] = calculateTiraIndicators(
+      currentData,
+      previousData,
+      year,
+      industryData,
+      prevIndustryData.length > 0 ? prevIndustryData : null,
+      pLow,
+      pHigh
+    );
+  }
+
+  // Comparison companies TIRA indicators
+  const compResults: Record<string, any> = {};
+  for (const compTicker of comparisons) {
+    const compCompany = storage.getCompany(compTicker);
+    if (!compCompany) continue;
+    const compFinData = storage.getFinancialData(compTicker, reportType);
+    if (!compFinData) continue;
+
+    const compResult: Record<string, any> = {};
+    for (const year of selectedYears) {
+      const currentData = compFinData[year];
+      if (!currentData) continue;
+      const prevYear = String(parseInt(year) - 1);
+      const previousData = compFinData[prevYear] || null;
+
+      const industryData = storage.getIndustryFinancialData(
+        compCompany.nganh_2 || "",
+        year,
+        reportType
+      );
+      const prevIndustryData = storage.getIndustryFinancialData(
+        compCompany.nganh_2 || "",
+        prevYear,
+        reportType
+      );
+
+      compResult[year] = calculateTiraIndicators(
+        currentData,
+        previousData,
+        year,
+        industryData,
+        prevIndustryData.length > 0 ? prevIndustryData : null,
+        pLow,
+        pHigh
+      );
+    }
+    compResults[compTicker] = { company: compCompany, indicators: compResult };
+  }
+
+  return {
+    company,
+    selectedYears,
+    finData,
+    targetIndicators: targetResult,
+    compResults,
+  };
+}
+
+// ─────────────────────────────────────────────
+// AI call helpers
+// ─────────────────────────────────────────────
+async function callAnthropicModel(prompt: string, modelId: string): Promise<string> {
+  if (!anthropicClient) {
+    throw new Error("ANTHROPIC_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.");
+  }
+  const msg = await anthropicClient.messages.create({
+    model: modelId,
+    max_tokens: 4096,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const block = msg.content[0];
+  if (block.type === "text") return block.text;
+  return "";
+}
+
+async function callDeepSeekModel(prompt: string, modelId: string): Promise<string> {
+  if (!deepseekClient) {
+    throw new Error("DEEPSEEK_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.");
+  }
+  const completion = await deepseekClient.chat.completions.create({
+    model: modelId,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 4096,
+  });
+  return completion.choices[0]?.message?.content || "";
+}
+
+async function generateReportText(
+  prompt: string,
+  aiModel: string
+): Promise<string> {
+  if (aiModel === "deepseek") {
+    return callDeepSeekModel(prompt, "deepseek-reasoner");
+  }
+  // default: claude-haiku
+  return callAnthropicModel(prompt, "claude-3-5-haiku-20241022");
+}
+
+// ─────────────────────────────────────────────
+// Register all routes
+// ─────────────────────────────────────────────
 export async function registerRoutes(httpServer: Server, app: Express) {
   // Load data on startup
   await storage.loadData();
 
-  // Search companies
+  // ── Company search ──────────────────────────
   app.get("/api/companies/search", (req: Request, res: Response) => {
     const query = (req.query.q as string) || "";
     const results = storage.searchCompanies(query);
     res.json(results);
   });
 
-  // Get all companies (paginated)
+  // ── All companies (paginated) ───────────────
   app.get("/api/companies", (req: Request, res: Response) => {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const nganh_2 = req.query.nganh_2 as string;
-    
+
     let filtered = storage.companies;
     if (nganh_2) {
-      filtered = filtered.filter(c => c.nganh_2 === nganh_2);
+      filtered = filtered.filter((c) => c.nganh_2 === nganh_2);
     }
-    
+
     const start = (page - 1) * limit;
     res.json({
       data: filtered.slice(start, start + limit),
@@ -37,64 +230,69 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     });
   });
 
-  // Get company details
+  // ── Company details ─────────────────────────
   app.get("/api/companies/:ma_ck", (req: Request, res: Response) => {
-    const company = storage.getCompany(req.params.ma_ck);
+    const maCk = req.params.ma_ck as string;
+    const company = storage.getCompany(maCk);
     if (!company) {
       return res.status(404).json({ error: "Company not found" });
     }
-    
-    // Check available report types
-    const hasParent = !!storage.getFinancialData(req.params.ma_ck, "Parent");
-    const hasConsolidated = !!storage.getFinancialData(req.params.ma_ck, "Consolidated");
-    
-    // Get available years
-    const finData = storage.getFinancialData(req.params.ma_ck, hasParent ? "Parent" : "Consolidated");
+
+    const hasParent = !!storage.getFinancialData(maCk, "Parent");
+    const hasConsolidated = !!storage.getFinancialData(maCk, "Consolidated");
+
+    const finData = storage.getFinancialData(
+      maCk,
+      hasParent ? "Parent" : "Consolidated"
+    );
     const years = finData ? Object.keys(finData).sort().reverse() : [];
-    
-    res.json({
-      ...company,
-      hasParent,
-      hasConsolidated,
-      availableYears: years,
-    });
+
+    res.json({ ...company, hasParent, hasConsolidated, availableYears: years });
   });
 
-  // Get suggested comparables
+  // ── Suggested comparables ───────────────────
   app.get("/api/companies/:ma_ck/comparables", (req: Request, res: Response) => {
-    const company = storage.getCompany(req.params.ma_ck);
+    const maCk = req.params.ma_ck as string;
+    const company = storage.getCompany(maCk);
     if (!company || !company.nganh_2) {
       return res.json([]);
     }
-    
+
     const reportType = (req.query.report_type as string) || "Parent";
-    const sameIndustry = storage.getIndustryCompanies(company.nganh_2)
-      .filter(c => c.ma_ck !== req.params.ma_ck)
-      .filter(c => !!storage.getFinancialData(c.ma_ck, reportType));
-    
-    // Sort by von_dieu_le similarity
+    const sameIndustry = storage
+      .getIndustryCompanies(company.nganh_2)
+      .filter((c) => c.ma_ck !== maCk)
+      .filter((c) => !!storage.getFinancialData(c.ma_ck, reportType));
+
     const targetVon = company.von_dieu_le || 0;
     sameIndustry.sort((a, b) => {
       const diffA = Math.abs((a.von_dieu_le || 0) - targetVon);
       const diffB = Math.abs((b.von_dieu_le || 0) - targetVon);
       return diffA - diffB;
     });
-    
+
     res.json(sameIndustry.slice(0, 20));
   });
 
-  // Get unique industries
+  // ── Industries ──────────────────────────────
   app.get("/api/industries", (req: Request, res: Response) => {
     const industries = storage.getUniqueIndustries();
     res.json(industries);
   });
 
-  // Main analysis endpoint
+  // ── Main analysis endpoint ──────────────────
   app.post("/api/analyze", (req: Request, res: Response) => {
-    const { target_ticker, report_type, comparison_tickers, years, percentile_low, percentile_high } = req.body;
+    const {
+      target_ticker,
+      report_type,
+      comparison_tickers,
+      years,
+      percentile_low,
+      percentile_high,
+    } = req.body;
     const pLow: number = typeof percentile_low === "number" ? percentile_low : 25;
     const pHigh: number = typeof percentile_high === "number" ? percentile_high : 75;
-    
+
     if (!target_ticker || !report_type) {
       return res.status(400).json({ error: "Missing target_ticker or report_type" });
     }
@@ -117,16 +315,19 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     for (const year of selectedYears) {
       const currentData = finData[year];
       if (!currentData) continue;
-      
+
       const prevYear = String(parseInt(year) - 1);
       const previousData = finData[prevYear] || null;
-      
-      // Get industry data for benchmarking
+
       const industryData = storage.getIndustryFinancialData(
-        company.nganh_2 || "", year, report_type
+        company.nganh_2 || "",
+        year,
+        report_type
       );
       const prevIndustryData = storage.getIndustryFinancialData(
-        company.nganh_2 || "", prevYear, report_type
+        company.nganh_2 || "",
+        prevYear,
+        report_type
       );
 
       const indicators = calculateTiraIndicators(
@@ -148,7 +349,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     for (const compTicker of compTickers) {
       const compCompany = storage.getCompany(compTicker);
       if (!compCompany) continue;
-      
+
       const compFinData = storage.getFinancialData(compTicker, report_type);
       if (!compFinData) continue;
 
@@ -156,15 +357,19 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       for (const year of selectedYears) {
         const currentData = compFinData[year];
         if (!currentData) continue;
-        
+
         const prevYear = String(parseInt(year) - 1);
         const previousData = compFinData[prevYear] || null;
-        
+
         const industryData = storage.getIndustryFinancialData(
-          compCompany.nganh_2 || "", year, report_type
+          compCompany.nganh_2 || "",
+          year,
+          report_type
         );
         const prevIndustryData = storage.getIndustryFinancialData(
-          compCompany.nganh_2 || "", prevYear, report_type
+          compCompany.nganh_2 || "",
+          prevYear,
+          report_type
         );
 
         const indicators = calculateTiraIndicators(
@@ -179,7 +384,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
         compResult[year] = indicators;
       }
-      
+
       comparisons[compTicker] = {
         company: compCompany,
         indicators: compResult,
@@ -197,7 +402,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     });
   });
 
-  // Upload new data
+  // ── Upload new data ─────────────────────────
   app.post("/api/upload", upload.single("file"), async (req: Request, res: Response) => {
     try {
       if (!req.file) {
@@ -206,34 +411,34 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
       const XLSX = await import("xlsx");
       const workbook = XLSX.readFile(req.file.path);
-      
+
       let addedCompanies = 0;
       let addedFinancial = 0;
 
-      // Parse financial_full sheet
+      // ── Parse financial_full sheet (existing format) ──────────
       if (workbook.SheetNames.includes("financial_full")) {
         const ws = workbook.Sheets["financial_full"];
         const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-        
+
         if (data.length > 3) {
           const dateRow = data[1];
           const tickerRow = data[2];
-          
+
           for (let col = 2; col < dateRow.length; col++) {
             const dateVal = dateRow[col];
             const tickerVal = tickerRow[col];
             if (!dateVal || !tickerVal) continue;
-            
+
             const year = String(dateVal).substring(0, 4);
             const tk = `${tickerVal} - Parent`;
-            
+
             if (!storage.financialFull[tk]) {
               storage.financialFull[tk] = {};
             }
             if (!storage.financialFull[tk][year]) {
               storage.financialFull[tk][year] = {};
             }
-            
+
             for (let row = 3; row < data.length; row++) {
               const key = String(data[row][0]);
               const val = data[row][col];
@@ -246,11 +451,88 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         }
       }
 
-      // Parse general_data sheet for new companies
+      // ── Parse financial_data sheet (template format) ──────────
+      // Template layout:
+      //   B3 = company name, B4 = ticker, B5 = industry
+      //   Row 7 = headers: Key | Khoản mục | 2024 | 2023 | ...
+      //   Row 8+ = data rows: col A = key, col B = name, col C+ = yearly values
+      if (workbook.SheetNames.includes("financial_data")) {
+        const ws = workbook.Sheets["financial_data"];
+        const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][];
+
+        // Extract metadata from rows 3-5 (0-indexed: rows 2-4)
+        const templateTicker =
+          rawData[3] && rawData[3][1] != null ? String(rawData[3][1]).trim() : "";
+        const templateCompanyName =
+          rawData[2] && rawData[2][1] != null ? String(rawData[2][1]).trim() : "";
+        const templateIndustry =
+          rawData[4] && rawData[4][1] != null ? String(rawData[4][1]).trim() : "";
+
+        if (templateTicker) {
+          // Header row is row 7 (0-indexed: row 6)
+          const headerRow: any[] = rawData[6] || [];
+          // Years start at column index 2 (C onwards)
+          const yearCols: { year: string; colIdx: number }[] = [];
+          for (let c = 2; c < headerRow.length; c++) {
+            const cellVal = headerRow[c];
+            if (cellVal != null && String(cellVal).trim() !== "") {
+              yearCols.push({ year: String(cellVal).trim(), colIdx: c });
+            }
+          }
+
+          // Initialise storage for this ticker
+          const tk = `${templateTicker} - Parent`;
+          if (!storage.financialFull[tk]) {
+            storage.financialFull[tk] = {};
+          }
+          for (const { year } of yearCols) {
+            if (!storage.financialFull[tk][year]) {
+              storage.financialFull[tk][year] = {};
+            }
+          }
+
+          // Data rows start at row 8 (0-indexed: row 7)
+          for (let r = 7; r < rawData.length; r++) {
+            const row = rawData[r];
+            if (!row) continue;
+            const key = row[0] != null ? String(row[0]).trim() : "";
+            if (!key) continue;
+
+            for (const { year, colIdx } of yearCols) {
+              const val = row[colIdx];
+              if (val !== null && val !== undefined && val !== "") {
+                storage.financialFull[tk][year][key] = val;
+                addedFinancial++;
+              }
+            }
+          }
+
+          // Register company if not already present
+          if (!storage.companyMap.has(templateTicker)) {
+            const newCompany = {
+              ma_ck: templateTicker,
+              name: templateCompanyName,
+              ten_tv: templateCompanyName,
+              san: "",
+              nganh_1: "",
+              nganh_2: templateIndustry,
+              nganh_3: "",
+              nganh_4: "",
+              loai_dn: "",
+              von_dieu_le: 0,
+            };
+            storage.companies.push(newCompany);
+            storage.companyMap.set(templateTicker, newCompany);
+            addedCompanies++;
+          }
+        }
+      }
+
+      // ── Parse general_data sheet for new companies ────────────
       if (workbook.SheetNames.includes("general_data")) {
         const ws = workbook.Sheets["general_data"];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-        
+
         for (const row of data) {
           const ma_ck = row["Mã CK"];
           if (ma_ck && !storage.companyMap.has(ma_ck)) {
@@ -274,7 +556,6 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       }
 
       // Clean up uploaded file
-      const fs = await import("fs");
       fs.unlinkSync(req.file.path);
 
       res.json({
@@ -286,12 +567,13 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
-  // Custom company analysis
+  // ── Custom company analysis ─────────────────
   app.post("/api/analyze-custom", (req: Request, res: Response) => {
-    const { company_name, nganh_2, financial_data, percentile_low, percentile_high } = req.body;
+    const { company_name, nganh_2, financial_data, percentile_low, percentile_high } =
+      req.body;
     const pLow: number = typeof percentile_low === "number" ? percentile_low : 25;
     const pHigh: number = typeof percentile_high === "number" ? percentile_high : 75;
-    
+
     if (!company_name || !nganh_2 || !financial_data) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -302,10 +584,10 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     for (const year of years) {
       const currentData = financial_data[year];
       if (!currentData) continue;
-      
+
       const prevYear = String(parseInt(year) - 1);
       const previousData = financial_data[prevYear] || null;
-      
+
       const industryData = storage.getIndustryFinancialData(nganh_2, year, "Parent");
       const prevIndustryData = storage.getIndustryFinancialData(nganh_2, prevYear, "Parent");
 
@@ -330,6 +612,229 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         indicators: result,
       },
       comparisons: {},
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // FEATURE 1: AI Report Generation
+  // POST /api/generate-report
+  // ════════════════════════════════════════════════════════════
+  app.post("/api/generate-report", async (req: Request, res: Response) => {
+    try {
+      const {
+        ticker,
+        report_type = "Parent",
+        years = [],
+        comparisons = [],
+        percentile_low = 25,
+        percentile_high = 75,
+        report_types = ["financial"],
+        ai_model = "claude-haiku",
+      } = req.body;
+
+      if (!ticker) {
+        return res.status(400).json({ error: "Missing ticker" });
+      }
+
+      // Check that at least one AI client is available
+      const usingDeepSeek = ai_model === "deepseek";
+      if (usingDeepSeek && !deepseekClient) {
+        return res.status(400).json({
+          error:
+            "DEEPSEEK_API_KEY is not set. Please set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY environment variable.",
+        });
+      }
+      if (!usingDeepSeek && !anthropicClient) {
+        return res.status(400).json({
+          error:
+            "ANTHROPIC_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.",
+        });
+      }
+
+      // Run analysis
+      const analysis = runAnalysis(
+        ticker,
+        report_type,
+        years,
+        comparisons,
+        percentile_low,
+        percentile_high
+      );
+
+      if (!analysis) {
+        return res.status(404).json({ error: "Company or financial data not found" });
+      }
+
+      const { company, selectedYears, finData, targetIndicators, compResults } = analysis;
+      const companyName = company.ten_tv || company.name || ticker;
+
+      // Build summary of financial data for the AI prompt
+      const financialSummary: Record<string, any> = {};
+      for (const year of selectedYears) {
+        if (finData[year]) {
+          financialSummary[year] = finData[year];
+        }
+      }
+
+      // Build comparison summary
+      const comparisonSummary: Record<string, any> = {};
+      for (const [ct, cData] of Object.entries(compResults)) {
+        comparisonSummary[ct] = (cData as any).indicators;
+      }
+
+      const financialDataJson = JSON.stringify(financialSummary, null, 2);
+      const tiraIndicatorsJson = JSON.stringify(targetIndicators, null, 2);
+      const comparisonDataJson = JSON.stringify(comparisonSummary, null, 2);
+
+      // Generate requested reports
+      const generatedReports: Record<string, string> = {};
+
+      const reportTypeList: string[] = Array.isArray(report_types) ? report_types : ["financial"];
+
+      for (const rType of reportTypeList) {
+        let prompt = "";
+
+        if (rType === "financial") {
+          prompt = `Bạn là chuyên gia phân tích tài chính. Viết báo cáo phân tích sơ bộ tình hình tài chính bằng tiếng Việt cho công ty ${ticker} - ${companyName}.
+
+Báo cáo cần bao gồm:
+1. Executive Summary (tóm tắt tổng quan)
+2. Phân tích doanh thu và lợi nhuận (xu hướng qua các năm)
+3. Phân tích cơ cấu tài sản và nguồn vốn
+4. Phân tích hiệu quả hoạt động
+5. Các vấn đề và rủi ro tài chính cần lưu ý
+6. Kết luận và khuyến nghị
+
+Dữ liệu tài chính: ${financialDataJson}
+Kết quả phân tích TIRA: ${tiraIndicatorsJson}
+
+Hãy liên kết các chỉ số với nhau (ví dụ: doanh thu tăng nhưng lợi nhuận giảm, ETR thay đổi...).
+Viết chuyên nghiệp, có số liệu cụ thể.`;
+        } else if (rType === "tax") {
+          prompt = `Bạn là chuyên gia tư vấn thuế. Viết báo cáo phân tích rủi ro thuế bằng tiếng Việt cho công ty ${ticker} - ${companyName} dựa trên chỉ số TIRA.
+
+Báo cáo cần bao gồm:
+1. Executive Summary - Tóm tắt mức độ rủi ro thuế tổng thể
+2. Phân tích Yếu tố rủi ro 1 (ngưỡng cố định - góc nhìn cơ quan thuế):
+   - Liệt kê các chỉ số có RR1 = "red" và phân tích ý nghĩa
+3. Phân tích Yếu tố rủi ro 2 (so sánh phân vị ngành):
+   - Liệt kê các chỉ số có RR2 = "red" và phân tích ý nghĩa
+4. Phân tích tương quan giữa các chỉ số (ví dụ: DT tăng nhưng ETR giảm)
+5. Các rủi ro trọng yếu cần lưu ý
+6. Khuyến nghị hành động
+
+Dữ liệu TIRA: ${tiraIndicatorsJson}
+Dữ liệu tài chính: ${financialDataJson}
+So sánh ngành: ${comparisonDataJson}
+
+Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số liệu cụ thể.`;
+        } else {
+          // Unknown report type — skip gracefully
+          continue;
+        }
+
+        const reportText = await generateReportText(prompt, ai_model);
+        generatedReports[rType] = reportText;
+      }
+
+      res.json({
+        success: true,
+        ticker,
+        company_name: companyName,
+        years: selectedYears,
+        ai_model,
+        reports: generatedReports,
+      });
+    } catch (error: any) {
+      console.error("Error generating report:", error);
+      res.status(500).json({ error: `Lỗi tạo báo cáo: ${error.message}` });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // FEATURE 2: Report History (JSON file persistence)
+  // ════════════════════════════════════════════════════════════
+
+  // Save a report
+  app.post("/api/reports/save", (req: Request, res: Response) => {
+    try {
+      const { name, ticker, date, type, content, analysis_params } = req.body;
+
+      if (!ticker || !content) {
+        return res.status(400).json({ error: "Missing required fields: ticker, content" });
+      }
+
+      const record: ReportRecord = {
+        id: uuidv4(),
+        name:
+          name ||
+          `${ticker} - ${date || new Date().toISOString().split("T")[0]} - ${
+            type === "tax" ? "Phân tích rủi ro thuế" : "Phân tích tài chính"
+          }`,
+        ticker,
+        created_at: new Date().toISOString(),
+        report_type: type || "financial",
+        content,
+        analysis_params: analysis_params || {},
+      };
+
+      reportHistory.push(record);
+      saveHistory(reportHistory);
+
+      res.json({ success: true, id: record.id, record });
+    } catch (error: any) {
+      res.status(500).json({ error: `Lỗi lưu báo cáo: ${error.message}` });
+    }
+  });
+
+  // List all reports
+  app.get("/api/reports", (_req: Request, res: Response) => {
+    // Return list sorted newest first, without heavy content field
+    const list = reportHistory
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      .map(({ content: _content, ...rest }) => rest);
+    res.json(list);
+  });
+
+  // Get a specific report
+  app.get("/api/reports/:id", (req: Request, res: Response) => {
+    const record = reportHistory.find((r) => r.id === req.params.id);
+    if (!record) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    res.json(record);
+  });
+
+  // Delete a report
+  app.delete("/api/reports/:id", (req: Request, res: Response) => {
+    const idx = reportHistory.findIndex((r) => r.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    reportHistory.splice(idx, 1);
+    saveHistory(reportHistory);
+    res.json({ success: true });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // FEATURE 3: Template Excel Download
+  // GET /api/template/download
+  // ════════════════════════════════════════════════════════════
+  app.get("/api/template/download", (_req: Request, res: Response) => {
+    const templatePath = path.resolve(process.cwd(), "data", "tira_template.xlsx");
+
+    if (!fs.existsSync(templatePath)) {
+      return res.status(404).json({ error: "Template file not found" });
+    }
+
+    res.download(templatePath, "tira_template.xlsx", (err) => {
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: "Error sending template file" });
+      }
     });
   });
 
