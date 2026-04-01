@@ -44,7 +44,9 @@ import {
   Loader2,
   Sparkles,
   Save,
+  SlidersHorizontal,
 } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import {
   BarChart,
   Bar,
@@ -523,6 +525,8 @@ export default function Dashboard() {
   const [aiReportError, setAiReportError] = useState<string | null>(null);
   const [aiSaving, setAiSaving] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
+  const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
+  const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
 
   const params = useMemo(() => {
     return getHashParams();
@@ -1130,6 +1134,36 @@ export default function Dashboard() {
           <RiskHeatmapView result={result} />
         </TabsContent>
       </Tabs>
+
+      {/* Risk Scoring Editor Panel */}
+      <div className="mt-6">
+        <button
+          data-testid="btn-toggle-scoring-panel"
+          onClick={() => setScoringPanelOpen(!scoringPanelOpen)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors w-full"
+          style={{
+            background: scoringPanelOpen ? "hsl(183, 85%, 12%)" : "hsl(214, 10%, 97%)",
+            borderColor: scoringPanelOpen ? "hsl(183, 85%, 30%)" : "hsl(214, 10%, 85%)",
+            color: scoringPanelOpen ? "hsl(183, 85%, 55%)" : "hsl(215, 20%, 40%)",
+          }}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          Điều chỉnh Risk Scoring
+          {scoringPanelOpen ? (
+            <ChevronUp className="w-4 h-4 ml-auto" />
+          ) : (
+            <ChevronDown className="w-4 h-4 ml-auto" />
+          )}
+        </button>
+
+        {scoringPanelOpen && (
+          <RiskScoringEditor
+            result={result}
+            weights={customWeights}
+            onWeightsChange={setCustomWeights}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -2161,6 +2195,32 @@ function intensityColor(score: number): string {
   return "hsl(0, 72%, 70%)"; // red
 }
 
+// Enhanced deviation calculation for heatmap
+function calculateDeviation(indicator: TiraIndicator): { rr1Dev: number; rr2Dev: number } {
+  // RR1: binary for now (0 or 1 based on threshold breach)
+  const rr1Dev = indicator.risk_level_1 === "red" ? 1 : 0;
+
+  // RR2: normalized distance from median, scaled by IQR
+  let rr2Dev = 0;
+  if (
+    indicator.company_value !== null &&
+    indicator.industry_median !== null
+  ) {
+    const median = indicator.industry_median;
+    const pLow = indicator.industry_p_low;
+    const pHigh = indicator.industry_p_high;
+    if (pLow !== null && pHigh !== null && pHigh - pLow > 0) {
+      const iqr = pHigh - pLow;
+      const distFromMedian = Math.abs(indicator.company_value - median);
+      rr2Dev = Math.min(distFromMedian / iqr, 2) / 2; // Normalized 0-1
+    } else if (indicator.risk_level_2 === "red") {
+      rr2Dev = 0.8; // fallback if IQR not available
+    }
+  }
+
+  return { rr1Dev, rr2Dev };
+}
+
 function RiskHeatmapView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const years = target.years;
@@ -2215,22 +2275,26 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
         </CardHeader>
         <CardContent>
           {/* Legend */}
-          <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <span className="text-xs text-muted-foreground font-medium">Mức độ rủi ro:</span>
-            {[
-              { label: "An toàn", color: "hsl(142, 55%, 90%)" },
-              { label: "Rủi ro nhẹ", color: "hsl(45, 90%, 80%)" },
-              { label: "Rủi ro trung bình", color: "hsl(25, 90%, 75%)" },
-              { label: "Rủi ro cao", color: "hsl(0, 72%, 70%)" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center gap-1.5">
-                <span
-                  className="inline-block w-4 h-4 rounded border border-border/30"
-                  style={{ backgroundColor: item.color }}
-                />
-                <span className="text-xs text-muted-foreground">{item.label}</span>
+          <div className="flex items-center gap-4 mb-4 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Chú thích thanh màu:</span>
+            <div className="flex items-center gap-1.5">
+              <div className="flex w-10 h-4 rounded overflow-hidden border border-border/30">
+                <div className="w-1/2 h-full" style={{ background: "hsl(25, 90%, 60%)" }} />
+                <div className="w-1/2 h-full" style={{ background: "hsl(214, 10%, 90%)" }} />
               </div>
-            ))}
+              <span className="text-xs text-muted-foreground">Trái (cam) = RR1 – Ngưỡng tuyệt đối</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="flex w-10 h-4 rounded overflow-hidden border border-border/30">
+                <div className="w-1/2 h-full" style={{ background: "hsl(214, 10%, 90%)" }} />
+                <div className="w-1/2 h-full" style={{ background: "hsl(0, 72%, 55%)" }} />
+              </div>
+              <span className="text-xs text-muted-foreground">Phải (đỏ) = RR2 – Lệch IQR ngành</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-4 rounded border border-border/30" style={{ background: "hsl(142, 55%, 88%)" }} />
+              <span className="text-xs text-muted-foreground">Xanh = An toàn</span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -2286,51 +2350,80 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
                               </td>
                             );
                           }
-                          const score = riskIntensity(ind);
-                          const bgColor = intensityColor(score);
+                          const { rr1Dev, rr2Dev } = calculateDeviation(ind);
+                          const bothSafe = rr1Dev === 0 && rr2Dev < 0.2;
+                          const cellBg = bothSafe
+                            ? "hsl(142, 55%, 94%)"
+                            : "hsl(214, 10%, 98%)";
+                          // RR1 bar: orange gradient based on rr1Dev
+                          const rr1Alpha = Math.round(rr1Dev * 100);
+                          // RR2 bar: red gradient based on rr2Dev
+                          const rr2Alpha = Math.round(rr2Dev * 100);
                           return (
                             <td
                               key={year}
-                              className="py-1.5 px-3 text-center"
-                              style={{ backgroundColor: bgColor }}
+                              className="py-1 px-2 text-center"
+                              style={{ backgroundColor: cellBg }}
                               data-testid={`heatmap-cell-${indId}-${year}`}
                             >
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <div className="cursor-help">
+                                    {/* Value */}
                                     <div
-                                      className="text-[11px] font-semibold"
+                                      className="text-[11px] font-semibold mb-1"
                                       style={{
                                         color:
-                                          score >= 0.5
+                                          rr1Dev > 0 && rr2Dev > 0.5
                                             ? "hsl(0, 60%, 30%)"
-                                            : score > 0
+                                            : rr1Dev > 0 || rr2Dev > 0.3
                                             ? "hsl(25, 70%, 30%)"
                                             : "hsl(142, 55%, 30%)",
                                       }}
                                     >
                                       {fmtVal(indId, ind.company_value)}
                                     </div>
-                                    <div className="text-[9px] mt-0.5 text-foreground/50">
-                                      {score === 0
-                                        ? "An toàn"
-                                        : score <= 0.5
-                                        ? "RR1 hoặc RR2"
-                                        : "Rủi ro cao"}
+                                    {/* Dual bar */}
+                                    <div className="flex h-2 rounded overflow-hidden w-full gap-px">
+                                      {/* Left bar = RR1 (orange) */}
+                                      <div
+                                        className="w-1/2 rounded-l"
+                                        style={{
+                                          background:
+                                            rr1Alpha > 0
+                                              ? `hsl(25, 90%, ${Math.max(45, 90 - rr1Alpha * 0.4)}%)`
+                                              : "hsl(214, 10%, 88%)",
+                                          opacity: rr1Alpha > 0 ? 1 : 0.4,
+                                        }}
+                                        title={`RR1: ${rr1Dev > 0 ? "Rủi ro" : "An toàn"}`}
+                                      />
+                                      {/* Right bar = RR2 (red) */}
+                                      <div
+                                        className="w-1/2 rounded-r"
+                                        style={{
+                                          background:
+                                            rr2Alpha > 20
+                                              ? `hsl(0, 72%, ${Math.max(40, 90 - rr2Alpha * 0.5)}%)`
+                                              : "hsl(214, 10%, 88%)",
+                                          opacity: rr2Alpha > 20 ? 1 : 0.4,
+                                        }}
+                                        title={`RR2: ${rr2Dev > 0.3 ? "Lệch IQR" : "Trong IQR"}`}
+                                      />
                                     </div>
                                   </div>
                                 </TooltipTrigger>
-                                <TooltipContent side="top" className="text-xs max-w-[200px]">
+                                <TooltipContent side="top" className="text-xs max-w-[220px]">
                                   <p className="font-semibold">{ind.name}</p>
                                   <p>Năm: {year}</p>
                                   <p>Giá trị: {fmtVal(indId, ind.company_value)}</p>
+                                  <p>Trung vị ngành: {fmtVal(indId, ind.industry_median)}</p>
                                   <p>
-                                    RR1:{" "}
+                                    RR1 (Ngưỡng):{" "}
                                     <span
                                       style={{
                                         color:
                                           ind.risk_level_1 === "red"
-                                            ? "hsl(0,72%,48%)"
+                                            ? "hsl(25,90%,45%)"
                                             : "hsl(142,55%,40%)",
                                       }}
                                     >
@@ -2338,7 +2431,7 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
                                     </span>
                                   </p>
                                   <p>
-                                    RR2:{" "}
+                                    RR2 (Lệch IQR: {(rr2Dev * 100).toFixed(0)}%):{" "}
                                     <span
                                       style={{
                                         color:
@@ -2365,5 +2458,266 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/* ========== RISK SCORING EDITOR ========== */
+const WEIGHT_FACTORS: Record<number, number> = { 1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2 };
+const WEIGHT_LABELS_SCORING: Record<number, string> = {
+  1: "Rất cao",
+  2: "Cao",
+  3: "Trung bình",
+  4: "Thấp",
+  5: "Rất thấp",
+};
+const WEIGHT_COLORS_SCORING: Record<number, string> = {
+  1: "hsl(0, 72%, 48%)",
+  2: "hsl(25, 90%, 50%)",
+  3: "hsl(45, 90%, 50%)",
+  4: "hsl(142, 55%, 40%)",
+  5: "hsl(215, 20%, 60%)",
+};
+
+const INDICATOR_NAMES_SCORING: Record<string, string> = {
+  "0.1": "Chi phí thuế / Doanh thu",
+  "0.2": "Biến động LN trước thuế / Doanh thu",
+  "0.3": "Biến động doanh thu thuần",
+  "1.1": "Thuế suất hiệu quả (ETR)",
+  "1.2": "Thuế suất hiệu quả gộp",
+  "1.3": "Biến động LN kế toán trước thuế",
+  "1.4": "Biến động chi phí thuế hiện hành",
+  "1.5": "Biên lợi nhuận gộp",
+  "1.6": "Biên lợi nhuận hoạt động",
+  "1.7": "Biên lợi nhuận sau thuế",
+  "2.1": "Tỷ lệ nợ thuế",
+  "2.2": "Biến động thuế đầu vào",
+  "2.3": "Doanh thu / Vốn Chủ Sở Hữu",
+  "2.4": "Lợi nhuận chưa phân phối / Vốn CSH",
+  "2.5": "Nợ phải trả / Vốn Chủ Sở Hữu",
+  "2.6": "Modified K Co-efficient",
+  "2.7": "Beneish M-Score",
+  "3.1": "Tỷ trọng giảm trừ DT / DT thuần",
+  "3.2": "Tỷ trọng CP bán hàng / DT thuần",
+  "3.3": "Tỷ trọng CP quản lý / DT thuần",
+  "3.4": "Lãi vay / EBITDA",
+  "3.5": "Số ngày tồn kho",
+  "3.6": "Số ngày phải thu",
+  "3.7": "Tốc độ tăng DT / Tốc độ tăng Giá vốn",
+};
+
+function calcCompositeScore(
+  indicators: TiraIndicator[],
+  weights: Record<string, number>
+): number {
+  let total = 0;
+  let max = 0;
+  for (const ind of indicators) {
+    const w = weights[ind.id] ?? 3;
+    const f = WEIGHT_FACTORS[w] ?? 0.6;
+    let pts = 0;
+    if ((ind.risk_level_1 || ind.risk_level) === "red") pts += 2;
+    if ((ind.risk_level_2 || "gray") === "red") pts += 2;
+    total += pts * f;
+    max += 4 * f;
+  }
+  return max > 0 ? Math.round((total / max) * 100) : 0;
+}
+
+function RiskScoringEditor({
+  result,
+  weights,
+  onWeightsChange,
+}: {
+  result: AnalysisResult;
+  weights: Record<string, number>;
+  onWeightsChange: (w: Record<string, number>) => void;
+}) {
+  const latestYear = result.target.years[0];
+  const indicators = result.target.indicators[latestYear] || [];
+
+  const compositeScore = useMemo(
+    () => calcCompositeScore(indicators, weights),
+    [indicators, weights]
+  );
+
+  const scoreColor =
+    compositeScore >= 60
+      ? "hsl(0, 72%, 48%)"
+      : compositeScore >= 35
+      ? "hsl(45, 90%, 45%)"
+      : "hsl(142, 55%, 40%)";
+
+  const groups = useMemo(() => {
+    const map = new Map<string, TiraIndicator[]>();
+    for (const ind of indicators) {
+      const list = map.get(ind.group) || [];
+      list.push(ind);
+      map.set(ind.group, list);
+    }
+    return Array.from(map.entries());
+  }, [indicators]);
+
+  function handleWeight(id: string, val: number) {
+    onWeightsChange({ ...weights, [id]: val });
+  }
+
+  return (
+    <Card className="mt-4" data-testid="risk-scoring-editor">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <SlidersHorizontal className="w-4 h-4" style={{ color: "hsl(183, 85%, 40%)" }} />
+          Điểm rủi ro tổng hợp
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Điều chỉnh trọng số từng chỉ số để tính điểm rủi ro theo mức ưu tiên riêng.
+          Mức 1 = quan trọng nhất, Mức 5 = ít quan trọng nhất.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {/* Composite score gauge */}
+        <div
+          className="flex items-center gap-6 p-4 rounded-xl mb-6 border"
+          style={{
+            background: "hsl(214, 10%, 97%)",
+            borderColor: `${scoreColor}40`,
+          }}
+          data-testid="composite-score-display"
+        >
+          {/* Circular progress */}
+          <div className="relative w-20 h-20 shrink-0">
+            <svg viewBox="0 0 80 80" className="w-20 h-20 -rotate-90">
+              <circle
+                cx="40"
+                cy="40"
+                r="32"
+                fill="none"
+                stroke="hsl(214, 10%, 88%)"
+                strokeWidth="8"
+              />
+              <circle
+                cx="40"
+                cy="40"
+                r="32"
+                fill="none"
+                stroke={scoreColor}
+                strokeWidth="8"
+                strokeLinecap="round"
+                strokeDasharray={`${2 * Math.PI * 32}`}
+                strokeDashoffset={`${2 * Math.PI * 32 * (1 - compositeScore / 100)}`}
+                style={{ transition: "stroke-dashoffset 0.4s ease" }}
+              />
+            </svg>
+            <div
+              className="absolute inset-0 flex items-center justify-center text-xl font-bold"
+              style={{ color: scoreColor }}
+            >
+              {compositeScore}
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: scoreColor }}>
+              Điểm rủi ro: {compositeScore}/100
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {compositeScore >= 60
+                ? "Rủi ro cao – cần kiểm tra ngay"
+                : compositeScore >= 35
+                ? "Rủi ro trung bình – theo dõi chặt chẽ"
+                : "Rủi ro thấp – tương đối an toàn"}
+            </p>
+            <p className="text-[11px] text-muted-foreground/60 mt-1">
+              Dựa trên {indicators.length} chỉ số năm {latestYear}
+            </p>
+          </div>
+        </div>
+
+        {/* Per-indicator weight sliders */}
+        <div className="space-y-4">
+          {groups.map(([groupName, groupInds]) => (
+            <div key={groupName}>
+              <div
+                className="text-[11px] font-bold uppercase tracking-wider px-2 py-1.5 rounded mb-2"
+                style={{ background: "hsl(183, 85%, 8%)", color: "hsl(183, 85%, 55%)" }}
+              >
+                {groupName}
+              </div>
+              <div className="space-y-2">
+                {groupInds.map((ind) => {
+                  const w = weights[ind.id] ?? 3;
+                  const hasRisk =
+                    ind.risk_level_1 === "red" || ind.risk_level_2 === "red";
+                  return (
+                    <div
+                      key={ind.id}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg border"
+                      style={{
+                        borderColor: hasRisk ? `${WEIGHT_COLORS_SCORING[w]}40` : "hsl(214, 10%, 90%)",
+                        background: hasRisk ? `${WEIGHT_COLORS_SCORING[w]}08` : "hsl(214, 10%, 98%)",
+                      }}
+                      data-testid={`scoring-row-${ind.id}`}
+                    >
+                      <Badge
+                        variant="outline"
+                        className="font-mono text-[10px] shrink-0 w-10 justify-center"
+                      >
+                        {ind.id}
+                      </Badge>
+                      <span
+                        className="text-xs flex-1 min-w-0 truncate"
+                        title={INDICATOR_NAMES_SCORING[ind.id] || ind.name}
+                      >
+                        {INDICATOR_NAMES_SCORING[ind.id] || ind.name}
+                      </span>
+                      {/* Risk badge */}
+                      {hasRisk ? (
+                        <Badge
+                          className="text-[9px] shrink-0"
+                          style={{
+                            background: "hsl(0, 72%, 92%)",
+                            color: "hsl(0, 72%, 40%)",
+                            border: "none",
+                          }}
+                        >
+                          Rủi ro
+                        </Badge>
+                      ) : (
+                        <Badge
+                          className="text-[9px] shrink-0"
+                          style={{
+                            background: "hsl(142, 55%, 92%)",
+                            color: "hsl(142, 55%, 35%)",
+                            border: "none",
+                          }}
+                        >
+                          An toàn
+                        </Badge>
+                      )}
+                      {/* Weight slider */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Slider
+                          value={[w]}
+                          min={1}
+                          max={5}
+                          step={1}
+                          className="w-24"
+                          onValueChange={([val]) => handleWeight(ind.id, val)}
+                          data-testid={`scoring-slider-${ind.id}`}
+                        />
+                        <span
+                          className="text-xs font-semibold w-20 text-right"
+                          style={{ color: WEIGHT_COLORS_SCORING[w] }}
+                        >
+                          {WEIGHT_LABELS_SCORING[w]}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

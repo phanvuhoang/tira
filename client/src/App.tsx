@@ -11,7 +11,10 @@ import Dashboard from "@/pages/dashboard";
 import UploadPage from "@/pages/upload";
 import CustomCompany from "@/pages/custom-company";
 import ReportHistory from "@/pages/history";
+import LoginPage from "@/pages/login";
+import AdminPage from "@/pages/admin";
 import { useState } from "react";
+import { setToken } from "@/lib/auth";
 import {
   BarChart3,
   Building2,
@@ -21,24 +24,48 @@ import {
   Menu,
   X,
   FileText,
+  Settings,
+  LogOut,
+  User,
 } from "lucide-react";
 
-function Sidebar() {
+interface UserInfo {
+  id: string;
+  username: string;
+  role: "admin" | "editor" | "viewer";
+  email?: string;
+}
+
+interface SidebarProps {
+  user: UserInfo;
+  onLogout: () => void;
+}
+
+function Sidebar({ user, onLogout }: SidebarProps) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const isAdmin = user.role === "admin";
+
   const links = [
-    { href: "/", label: "Phân tích", icon: BarChart3 },
-    { href: "/dashboard", label: "Dashboard", icon: Shield },
-    { href: "/custom", label: "Công ty mới", icon: PlusCircle },
-    { href: "/upload", label: "Tải dữ liệu", icon: Upload },
-    { href: "/history", label: "Lịch sử", icon: FileText },
-  ];
+    { href: "/", label: "Phân tích", icon: BarChart3, adminOnly: false },
+    { href: "/dashboard", label: "Dashboard", icon: Shield, adminOnly: false },
+    { href: "/custom", label: "Công ty mới", icon: PlusCircle, adminOnly: false },
+    { href: "/upload", label: "Tải dữ liệu", icon: Upload, adminOnly: false },
+    { href: "/history", label: "Lịch sử", icon: FileText, adminOnly: false },
+    { href: "/admin", label: "Quản trị", icon: Settings, adminOnly: true },
+  ].filter((link) => !link.adminOnly || isAdmin);
 
   const isActive = (href: string) => {
     if (href === "/") return location === "/" || location === "";
     return location.startsWith(href);
   };
+
+  const roleLabel = {
+    admin: "Quản trị viên",
+    editor: "Biên tập viên",
+    viewer: "Xem",
+  }[user.role];
 
   return (
     <>
@@ -99,18 +126,62 @@ function Sidebar() {
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 {link.label}
+                {link.href === "/admin" && (
+                  <span
+                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: "hsl(0, 72%, 30%)", color: "hsl(0, 72%, 80%)" }}
+                  >
+                    Admin
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
 
-        {/* Footer */}
-        <div className="px-5 py-4 border-t border-sidebar-border">
-          <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/40">
-            <Building2 className="w-3.5 h-3.5" />
-            <span>1,656 công ty niêm yết</span>
+        {/* User info + footer */}
+        <div className="px-3 py-3 border-t border-sidebar-border space-y-2">
+          {/* User info */}
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-sidebar-accent/30">
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "hsl(183, 85%, 22%)" }}
+            >
+              <User className="w-3.5 h-3.5" style={{ color: "hsl(183, 85%, 65%)" }} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p
+                className="text-xs font-medium truncate"
+                style={{ color: "hsl(0, 0%, 90%)" }}
+                data-testid="sidebar-username"
+              >
+                {user.username}
+              </p>
+              <p
+                className="text-[10px] truncate"
+                style={{ color: "hsl(215, 20%, 55%)" }}
+              >
+                {roleLabel}
+              </p>
+            </div>
+            <button
+              onClick={onLogout}
+              data-testid="btn-logout"
+              title="Đăng xuất"
+              className="p-1.5 rounded-md hover:bg-sidebar-accent/60 transition-colors"
+              style={{ color: "hsl(215, 20%, 55%)" }}
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <PerplexityAttribution />
+
+          <div className="px-2">
+            <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/40">
+              <Building2 className="w-3.5 h-3.5" />
+              <span>1,656 công ty niêm yết</span>
+            </div>
+            <PerplexityAttribution />
+          </div>
         </div>
       </aside>
     </>
@@ -118,9 +189,25 @@ function Sidebar() {
 }
 
 function AppLayout() {
+  const [user, setUser] = useState<UserInfo | null>(null);
+
+  const handleLogin = (u: UserInfo, token: string) => {
+    setToken(token);
+    setUser(u);
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+  };
+
+  if (!user) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar />
+      <Sidebar user={user} onLogout={handleLogout} />
       <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
         <Switch>
           <Route path="/" component={Home} />
@@ -128,6 +215,9 @@ function AppLayout() {
           <Route path="/custom" component={CustomCompany} />
           <Route path="/upload" component={UploadPage} />
           <Route path="/history" component={ReportHistory} />
+          <Route path="/admin">
+            {user.role === "admin" ? <AdminPage /> : <NotFound />}
+          </Route>
           <Route component={NotFound} />
         </Switch>
       </main>

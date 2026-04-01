@@ -8,6 +8,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { storage } from "./storage";
 import { calculateTiraIndicators } from "./tira-engine";
+import { loadUsers, login, register, verifyToken, getAllUsers, updateUserRole, deleteUser, resetPassword, authMiddleware, requireRole } from "./auth";
+import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore } from "./risk-scoring";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -38,6 +40,7 @@ interface ReportRecord {
   report_type: string;
   content: string;
   analysis_params: Record<string, any>;
+  user_id?: string;
 }
 
 function loadHistory(): ReportRecord[] {
@@ -202,6 +205,8 @@ async function generateReportText(
 export async function registerRoutes(httpServer: Server, app: Express) {
   // Load data on startup
   await storage.loadData();
+  loadUsers();
+  loadRiskWeights();
 
   // ── Company search ──────────────────────────
   app.get("/api/companies/search", (req: Request, res: Response) => {
@@ -764,6 +769,14 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
         return res.status(400).json({ error: "Missing required fields: ticker, content" });
       }
 
+      // Extract user if authenticated
+      let userId = "anonymous";
+      const authH = req.headers.authorization;
+      if (authH?.startsWith("Bearer ")) {
+        const p = verifyToken(authH.slice(7));
+        if (p) userId = p.id;
+      }
+
       const record: ReportRecord = {
         id: uuidv4(),
         name:
@@ -776,6 +789,7 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
         report_type: type || "financial",
         content,
         analysis_params: analysis_params || {},
+        user_id: userId,
       };
 
       reportHistory.push(record);
@@ -788,9 +802,19 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
   });
 
   // List all reports
-  app.get("/api/reports", (_req: Request, res: Response) => {
+  app.get("/api/reports", (req: Request, res: Response) => {
+    // Filter by user
+    const authH2 = req.headers.authorization;
+    let filteredReports = reportHistory;
+    if (authH2?.startsWith("Bearer ")) {
+      const p = verifyToken(authH2.slice(7));
+      if (p && p.role !== "admin") {
+        filteredReports = reportHistory.filter(r => r.user_id === p.id || r.user_id === "anonymous");
+      }
+    }
+
     // Return list sorted newest first, without heavy content field
-    const list = reportHistory
+    const list = filteredReports
       .slice()
       .sort(
         (a, b) =>
@@ -836,6 +860,84 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
         res.status(500).json({ error: "Error sending template file" });
       }
     });
+  });
+
+  // ========= AUTH ROUTES =========
+  app.post("/api/auth/login", (req: Request, res: Response) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Username và password là bắt buộc" });
+    const result = login(username, password);
+    if (!result) return res.status(401).json({ error: "Sai username hoặc password" });
+    res.json(result);
+  });
+
+  app.post("/api/auth/register", (req: Request, res: Response) => {
+    const { username, password, email } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Username và password là bắt buộc" });
+    if (password.length < 6) return res.status(400).json({ error: "Password phải có ít nhất 6 ký tự" });
+    const user = register(username, password, email);
+    if (!user) return res.status(409).json({ error: "Username đã tồn tại" });
+    const { password_hash, ...safe } = user;
+    res.json({ success: true, user: safe });
+  });
+
+  app.post("/api/auth/forgot-password", (req: Request, res: Response) => {
+    const { username, new_password } = req.body;
+    if (!username || !new_password) return res.status(400).json({ error: "Thiếu thông tin" });
+    // In production, this should send email. For now, admin can reset.
+    // Only allow if request comes from admin
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      const payload = verifyToken(authHeader.slice(7));
+      if (payload?.role === "admin") {
+        const ok = resetPassword(username, new_password);
+        if (!ok) return res.status(404).json({ error: "User không tồn tại" });
+        return res.json({ success: true });
+      }
+    }
+    return res.status(403).json({ error: "Chỉ admin mới có thể reset password" });
+  });
+
+  app.get("/api/auth/me", authMiddleware, (req: any, res: Response) => {
+    res.json({ user: req.user });
+  });
+
+  // ========= ADMIN ROUTES =========
+  app.get("/api/admin/users", authMiddleware, requireRole("admin"), (_req: Request, res: Response) => {
+    res.json(getAllUsers());
+  });
+
+  app.patch("/api/admin/users/:userId/role", authMiddleware, requireRole("admin"), (req: any, res: Response) => {
+    const { role } = req.body;
+    if (!["admin", "editor", "viewer"].includes(role)) return res.status(400).json({ error: "Role không hợp lệ" });
+    const ok = updateUserRole(req.params.userId, role);
+    if (!ok) return res.status(404).json({ error: "User không tìm thấy" });
+    res.json({ success: true });
+  });
+
+  app.delete("/api/admin/users/:userId", authMiddleware, requireRole("admin"), (req: any, res: Response) => {
+    const ok = deleteUser(req.params.userId);
+    if (!ok) return res.status(404).json({ error: "User không tìm thấy" });
+    res.json({ success: true });
+  });
+
+  // ========= RISK WEIGHTS ROUTES =========
+  app.get("/api/risk-weights", (_req: Request, res: Response) => {
+    res.json(getDefaultWeights());
+  });
+
+  app.put("/api/risk-weights", authMiddleware, requireRole("admin"), (req: any, res: Response) => {
+    const { weights } = req.body;
+    if (!Array.isArray(weights)) return res.status(400).json({ error: "weights phải là array" });
+    updateDefaultWeights(weights);
+    res.json({ success: true });
+  });
+
+  app.post("/api/risk-score", (req: Request, res: Response) => {
+    const { indicators, weights } = req.body;
+    if (!Array.isArray(indicators)) return res.status(400).json({ error: "indicators phải là array" });
+    const result = calculateCompositeScore(indicators, weights);
+    res.json(result);
   });
 
   return httpServer;
