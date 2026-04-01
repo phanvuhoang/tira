@@ -177,7 +177,7 @@ async function callAnthropicModel(prompt: string, modelId: string): Promise<stri
   try {
     const msg = await anthropicClient.messages.create({
       model: modelId,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: "user", content: prompt }],
     });
     const block = msg.content[0];
@@ -196,7 +196,7 @@ async function callDeepSeekModel(prompt: string, modelId: string): Promise<strin
     const completion = await deepseekClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
+      max_tokens: 8192,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -212,7 +212,7 @@ async function callOpenAIModel(prompt: string, modelId: string): Promise<string>
     const completion = await openaiClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
+      max_tokens: 8192,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -595,12 +595,48 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         }
       }
 
+      // Parse financial_pc sheet (consolidated reports)
+      if (workbook.SheetNames.includes("financial_pc")) {
+        const ws = workbook.Sheets["financial_pc"];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+        if (data.length > 3) {
+          const dateRow = data[1];
+          const tickerRow = data[2];
+
+          for (let col = 2; col < dateRow.length; col++) {
+            const dateVal = dateRow[col];
+            const tickerVal = tickerRow[col];
+            if (!dateVal || !tickerVal) continue;
+
+            const year = String(dateVal).substring(0, 4);
+            const tk = `${tickerVal} - Consolidated`;
+
+            if (!storage.financialPC[tk]) {
+              storage.financialPC[tk] = {};
+            }
+            if (!storage.financialPC[tk][year]) {
+              storage.financialPC[tk][year] = {};
+            }
+
+            for (let row = 3; row < data.length; row++) {
+              const key = String(data[row][0]);
+              const val = data[row][col];
+              if (key && val !== undefined && val !== null && val !== "") {
+                storage.financialPC[tk][year][key] = val;
+                addedFinancial++;
+              }
+            }
+          }
+        }
+      }
+
       // Clean up uploaded file
       fs.unlinkSync(req.file.path);
 
       res.json({
         success: true,
-        message: `Đã tải lên thành công. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu tài chính.`,
+        message: `Đã tải lên thành công. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu tài chính (bao gồm cả dữ liệu hợp nhất nếu có).`,
       });
     } catch (error: any) {
       res.status(500).json({ error: `Lỗi xử lý file: ${error.message}` });
@@ -752,7 +788,7 @@ Dữ liệu tài chính: ${financialDataJson}
 Kết quả phân tích TIRA: ${tiraIndicatorsJson}
 
 Hãy liên kết các chỉ số với nhau (ví dụ: doanh thu tăng nhưng lợi nhuận giảm, ETR thay đổi...).
-Viết chuyên nghiệp, có số liệu cụ thể.`;
+Viết chuyên nghiệp, có số liệu cụ thể. Viết đầy đủ, chi tiết, không cắt ngắn báo cáo.`;
         } else if (rType === "tax") {
           prompt = `Bạn là chuyên gia tư vấn thuế. Viết báo cáo phân tích rủi ro thuế bằng tiếng Việt cho công ty ${ticker} - ${companyName} dựa trên chỉ số TIRA.
 
@@ -770,7 +806,7 @@ Dữ liệu TIRA: ${tiraIndicatorsJson}
 Dữ liệu tài chính: ${financialDataJson}
 So sánh ngành: ${comparisonDataJson}
 
-Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số liệu cụ thể.`;
+Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số liệu cụ thể. Viết đầy đủ, chi tiết, không cắt ngắn báo cáo.`;
         } else {
           // Unknown report type — skip gracefully
           continue;

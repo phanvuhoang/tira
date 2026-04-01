@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileText,
   ChevronDown,
@@ -13,6 +15,8 @@ import {
   Clock,
   Building2,
   AlertCircle,
+  BarChart2,
+  ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -25,10 +29,24 @@ interface SavedReport {
   content?: string;
 }
 
+interface SavedAnalysis {
+  id: number | string;
+  name: string;
+  ticker: string;
+  report_type: string;
+  years: string[];
+  comparisons: string[];
+  created_at: string;
+  percentile_low?: number;
+  percentile_high?: number;
+}
+
 export default function ReportHistory() {
   const [expandedIds, setExpandedIds] = useState<Set<string | number>>(new Set());
+  const [activeTab, setActiveTab] = useState("reports");
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  useLocation(); // available for future navigation use
 
   const { data: reports, isLoading, error } = useQuery<SavedReport[]>({
     queryKey: ["/api/reports"],
@@ -37,6 +55,23 @@ export default function ReportHistory() {
       return res.json();
     },
   });
+
+  const { data: analyses, isLoading: analysesLoading, error: analysesError } = useQuery<SavedAnalysis[]>({
+    queryKey: ["/api/analyses"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/analyses");
+      return res.json();
+    },
+  });
+
+  function openAnalysis(analysis: SavedAnalysis) {
+    const yearsStr = (analysis.years || []).join(",");
+    const comparisonsStr = (analysis.comparisons || []).join(",");
+    const pLow = analysis.percentile_low ?? 25;
+    const pHigh = analysis.percentile_high ?? 75;
+    const hash = `#/dashboard?ticker=${encodeURIComponent(analysis.ticker)}&report_type=${encodeURIComponent(analysis.report_type)}&years=${encodeURIComponent(yearsStr)}&comparisons=${encodeURIComponent(comparisonsStr)}&p_low=${pLow}&p_high=${pHigh}`;
+    window.location.href = hash;
+  }
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number | string) => {
@@ -100,15 +135,28 @@ export default function ReportHistory() {
             <FileText className="w-6 h-6 text-primary" />
             <div>
               <h1 className="text-xl font-bold" data-testid="text-history-title">
-                Lịch sử báo cáo
+                Lịch sử
               </h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Danh sách các báo cáo AI đã tạo và lưu
+                Báo cáo AI và phân tích đã lưu
               </p>
             </div>
           </div>
         </div>
 
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="w-full justify-start">
+            <TabsTrigger value="reports" className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Báo cáo AI
+            </TabsTrigger>
+            <TabsTrigger value="analyses" className="flex items-center gap-2">
+              <BarChart2 className="w-4 h-4" />
+              Phân tích đã lưu
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="reports" className="mt-4 space-y-4">
         {isLoading && (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -233,6 +281,96 @@ export default function ReportHistory() {
             })}
           </div>
         )}
+          </TabsContent>
+
+          <TabsContent value="analyses" className="mt-4 space-y-4">
+            {analysesLoading && (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-20 w-full rounded-lg" />
+                ))}
+              </div>
+            )}
+
+            {analysesError && (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <AlertCircle className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Không thể tải danh sách phân tích. Vui lòng thử lại.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {!analysesLoading && !analysesError && (!analyses || analyses.length === 0) && (
+              <Card>
+                <CardContent className="p-12 text-center">
+                  <BarChart2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground/40" />
+                  <h3 className="text-base font-semibold mb-2">Chưa có phân tích nào được lưu</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Hãy nhấn "Lưu phân tích" từ trang Dashboard để lưu và xem lại ở đây.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {!analysesLoading && analyses && analyses.length > 0 && (
+              <div className="space-y-3">
+                {analyses.map((analysis) => (
+                  <Card
+                    key={analysis.id}
+                    className="border border-border hover:shadow-md transition-shadow"
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold">
+                              {analysis.name || `Phân tích ${analysis.ticker}`}
+                            </span>
+                            <Badge variant="outline" className="text-xs font-mono">
+                              {analysis.ticker}
+                            </Badge>
+                            <Badge variant="secondary" className="text-xs">
+                              {analysis.report_type === "Parent" ? "Công ty mẹ" : "Hợp nhất"}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDate(analysis.created_at)}
+                            </span>
+                            {analysis.years && analysis.years.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                Năm: {analysis.years.join(", ")}
+                              </span>
+                            )}
+                            {analysis.comparisons && analysis.comparisons.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                <Building2 className="w-3 h-3" />
+                                So sánh: {analysis.comparisons.join(", ")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openAnalysis(analysis)}
+                          className="shrink-0 gap-1.5 h-8"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          Mở phân tích
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

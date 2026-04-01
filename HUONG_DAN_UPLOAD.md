@@ -6,11 +6,11 @@ App TIRA cho phép cập nhật dữ liệu tài chính bằng cách upload file
 
 ## Cấu trúc file upload
 
-File upload cần tuân thủ đúng cấu trúc của file `raw_data_value.xlsx` gốc. App xử lý **2 sheet chính**:
+File upload cần tuân thủ đúng cấu trúc của file `raw_data_value.xlsx` gốc. App xử lý **3 sheet chính**:
 
 ---
 
-### 1. Sheet `financial_full` (Bắt buộc - Dữ liệu tài chính Công ty mẹ)
+### 1. Sheet `financial_full` (Dữ liệu tài chính Công ty mẹ)
 
 Đây là sheet chứa dữ liệu báo cáo tài chính của các công ty (dạng báo cáo Công ty mẹ / Parent).
 
@@ -37,6 +37,28 @@ File upload cần tuân thủ đúng cấu trúc của file `raw_data_value.xlsx
 - Nhiều năm của cùng 1 công ty sẽ nằm ở các cột liền kề
 - Nhiều công ty khác nhau sẽ tiếp tục sang các cột bên phải
 - App tự động thêm hậu tố ` - Parent` vào mã CK khi lưu
+
+---
+
+### 2. Sheet `financial_pc` (Dữ liệu tài chính Hợp nhất / Consolidated)
+
+Đây là sheet chứa dữ liệu báo cáo tài chính **hợp nhất** (Consolidated) của các công ty. Cấu trúc **hoàn toàn giống** sheet `financial_full`.
+
+**Cấu trúc:**
+
+| Hàng | Cột A (Key) | Cột B | Cột C | Cột D | ... |
+|------|-------------|-------|-------|-------|-----|
+| 1 | `Key` | `Kiểu thời gian` | `Năm` | `Năm` | ... |
+| 2 | `Ngày` | `Ngày` | `2024-12-31` | `2023-12-31` | ... |
+| 3 | `Mã CK` | `Mã CK` | `VNM` | `VNM` | ... |
+| 4+ | Mã khoản mục (số) | Tên khoản mục | Giá trị | Giá trị | ... |
+
+**Lưu ý:**
+- Cấu trúc hàng và cột giống hệt `financial_full`
+- App tự động thêm hậu tố ` - Consolidated` vào mã CK khi lưu
+- Khi phân tích, chọn loại báo cáo "Consolidated" để dùng dữ liệu từ sheet này
+
+---
 
 ### Các mã khoản mục quan trọng (Key)
 
@@ -80,7 +102,7 @@ File upload cần tuân thủ đúng cấu trúc của file `raw_data_value.xlsx
 
 ---
 
-### 2. Sheet `general_data` (Tùy chọn - Thêm công ty mới)
+### 3. Sheet `general_data` (Tùy chọn - Thêm công ty mới)
 
 Nếu upload dữ liệu cho công ty mới chưa có trong hệ thống, cần thêm sheet này.
 
@@ -115,7 +137,8 @@ Nếu upload dữ liệu cho công ty mới chưa có trong hệ thống, cần 
 
 - Dữ liệu upload được lưu **trong bộ nhớ** (in-memory). Nếu server khởi động lại, dữ liệu upload sẽ mất
 - Để dữ liệu lâu dài, hãy cập nhật trực tiếp các file JSON trong thư mục `data/`
-- Đảm bảo file upload có đúng tên sheet (`financial_full`, `general_data`)
+- Đảm bảo file upload có đúng tên sheet (`financial_full`, `financial_pc`, `general_data`)
+- Có thể upload file chỉ có `financial_full`, chỉ có `financial_pc`, hoặc cả hai cùng lúc
 - Giá trị tài chính phải là số (không có dấu phẩy hoặc ký hiệu tiền tệ)
 - Năm dữ liệu phải ở dạng ngày `YYYY-12-31` trên hàng 2
 

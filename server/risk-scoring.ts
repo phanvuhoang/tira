@@ -3,37 +3,37 @@ import path from "path";
 
 export interface RiskWeight {
   indicator_id: string;
-  weight: number; // 1-5, where 1 = highest importance
+  weight: number; // 1-5, where 5 = highest importance
 }
 
 const DATA_FILE = path.resolve(process.cwd(), "data", "risk_weights.json");
 
-// Default weights - all indicators start at weight 3 (medium)
+// Default weights - scale 1-5, where 5 = most important (Critical Red Lines), 1 = least important
 const DEFAULT_WEIGHTS: RiskWeight[] = [
-  { indicator_id: "0.1", weight: 1 },
-  { indicator_id: "0.2", weight: 1 },
-  { indicator_id: "0.3", weight: 1 },
-  { indicator_id: "1.1", weight: 2 },
-  { indicator_id: "1.2", weight: 2 },
-  { indicator_id: "1.3", weight: 2 },
-  { indicator_id: "1.4", weight: 2 },
+  { indicator_id: "0.1", weight: 5 },
+  { indicator_id: "0.2", weight: 5 },
+  { indicator_id: "0.3", weight: 5 },
+  { indicator_id: "1.1", weight: 4 },
+  { indicator_id: "1.2", weight: 4 },
+  { indicator_id: "1.3", weight: 4 },
+  { indicator_id: "1.4", weight: 4 },
   { indicator_id: "1.5", weight: 3 },
   { indicator_id: "1.6", weight: 3 },
-  { indicator_id: "1.7", weight: 2 },
-  { indicator_id: "2.1", weight: 2 },
+  { indicator_id: "1.7", weight: 4 },
+  { indicator_id: "2.1", weight: 4 },
   { indicator_id: "2.2", weight: 3 },
   { indicator_id: "2.3", weight: 3 },
   { indicator_id: "2.4", weight: 3 },
-  { indicator_id: "2.5", weight: 2 },
-  { indicator_id: "2.6", weight: 2 },
+  { indicator_id: "2.5", weight: 4 },
+  { indicator_id: "2.6", weight: 4 },
   { indicator_id: "2.7", weight: 3 },
-  { indicator_id: "3.1", weight: 4 },
-  { indicator_id: "3.2", weight: 4 },
-  { indicator_id: "3.3", weight: 4 },
+  { indicator_id: "3.1", weight: 2 },
+  { indicator_id: "3.2", weight: 2 },
+  { indicator_id: "3.3", weight: 2 },
   { indicator_id: "3.4", weight: 3 },
-  { indicator_id: "3.5", weight: 4 },
-  { indicator_id: "3.6", weight: 4 },
-  { indicator_id: "3.7", weight: 4 },
+  { indicator_id: "3.5", weight: 2 },
+  { indicator_id: "3.6", weight: 2 },
+  { indicator_id: "3.7", weight: 2 },
 ];
 
 let weights: RiskWeight[] = [];
@@ -66,7 +66,7 @@ export function updateDefaultWeights(newWeights: RiskWeight[]): void {
 
 // Calculate composite risk score with weights
 // Each indicator: risk_score = (risk1_score + risk2_score) * weight_factor
-// weight_factor: weight 1 = 1.0, weight 2 = 0.8, weight 3 = 0.6, weight 4 = 0.4, weight 5 = 0.2
+// weight_factor: weight 5 = 1.0 (highest), weight 4 = 0.8, weight 3 = 0.6, weight 2 = 0.4, weight 1 = 0.2 (lowest)
 export function calculateCompositeScore(
   indicators: Array<{ id: string; risk_level_1?: string; risk_level_2?: string; risk_level?: string }>,
   customWeights?: RiskWeight[]
@@ -74,7 +74,7 @@ export function calculateCompositeScore(
   const w = customWeights || weights;
   const weightMap = new Map(w.map(wt => [wt.indicator_id, wt.weight]));
   
-  const WEIGHT_FACTORS: Record<number, number> = { 1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2 };
+  const WEIGHT_FACTORS: Record<number, number> = { 5: 1.0, 4: 0.8, 3: 0.6, 2: 0.4, 1: 0.2 };
   
   let totalScore = 0;
   let maxScore = 0;

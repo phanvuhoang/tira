@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -69,6 +69,56 @@ import {
   Scatter,
   ZAxis,
 } from "recharts";
+
+/* ========== HELPER: Markdown to HTML ========== */
+function simpleMarkdownToHtml(md: string): string {
+  return md
+    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^- (.*$)/gm, '<li>$1</li>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br/>')
+    .replace(/^/, '<p>')
+    .replace(/$/, '</p>');
+}
+
+/* ========== HELPER: Export AI report to Word ========== */
+function exportAiReportToWord(content: string, ticker: string) {
+  // Convert markdown to HTML for Word export
+  const html = content
+    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^- (.*$)/gm, '<li>$1</li>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br/>');
+
+  const fullHtml = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8"><title>TIRA Report - ${ticker}</title>
+    <style>
+      body { font-family: 'Calibri', sans-serif; font-size: 11pt; line-height: 1.6; color: #333; }
+      h1 { font-size: 18pt; color: #028a39; border-bottom: 2px solid #028a39; padding-bottom: 6pt; }
+      h2 { font-size: 14pt; color: #1a2332; margin-top: 12pt; }
+      h3 { font-size: 12pt; color: #333; }
+      li { margin-left: 20pt; }
+      strong { color: #1a2332; }
+    </style></head>
+    <body><p>${html}</p></body></html>`;
+
+  const blob = new Blob([fullHtml], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `TIRA_Report_${ticker}.doc`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 interface TiraIndicator {
   id: string;
@@ -531,6 +581,26 @@ export default function Dashboard() {
   const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
   const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
+
+  // Load default weights from API
+  const { data: defaultWeights } = useQuery({
+    queryKey: ["/api/risk-weights"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/risk-weights");
+      return res.json();
+    },
+  });
+
+  // Initialize weights from defaults when available
+  useEffect(() => {
+    if (defaultWeights && Array.isArray(defaultWeights)) {
+      const map: Record<string, number> = {};
+      for (const w of defaultWeights) {
+        map[w.indicator_id] = w.weight;
+      }
+      setCustomWeights(map);
+    }
+  }, [defaultWeights]);
 
   const params = useMemo(() => {
     return getHashParams();
@@ -1001,11 +1071,10 @@ export default function Dashboard() {
             {aiReportContent && (
               <div className="space-y-3">
                 <div
-                  className="overflow-y-auto max-h-64 bg-accent/20 rounded-lg p-4 text-sm whitespace-pre-wrap"
+                  className="overflow-y-auto max-h-64 bg-accent/20 rounded-lg p-4 text-sm prose prose-sm max-w-none"
                   data-testid="ai-report-content"
-                >
-                  {aiReportContent}
-                </div>
+                  dangerouslySetInnerHTML={{ __html: simpleMarkdownToHtml(aiReportContent) }}
+                />
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
@@ -1025,13 +1094,12 @@ export default function Dashboard() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleExport}
-                    disabled={isExporting}
-                    data-testid="button-export-ai-pptx"
+                    onClick={() => exportAiReportToWord(aiReportContent, ticker)}
+                    data-testid="button-export-ai-word"
                     className="gap-2"
                   >
-                    <Download className="w-4 h-4" />
-                    Xuất PPTX
+                    <FileText className="w-4 h-4" />
+                    Xuất Word
                   </Button>
                 </div>
               </div>
@@ -1154,6 +1222,7 @@ export default function Dashboard() {
           <TabsTrigger value="analysis" data-testid="tab-analysis">Phân tích</TabsTrigger>
           <TabsTrigger value="risk-heatmap" data-testid="tab-risk-heatmap">Biểu đồ nhiệt</TabsTrigger>
           <TabsTrigger value="risk-diagram" data-testid="tab-risk-diagram">Risk Diagram</TabsTrigger>
+          <TabsTrigger value="giai-thich" data-testid="tab-giai-thich">Giải thích</TabsTrigger>
         </TabsList>
 
         <TabsContent value="heatmap" className="mt-4">
@@ -1183,6 +1252,10 @@ export default function Dashboard() {
         <TabsContent value="risk-diagram" className="mt-4">
           <RiskDiagramView result={result} weights={customWeights} />
         </TabsContent>
+
+        <TabsContent value="giai-thich" className="mt-4">
+          <CompositeScoreExplanation result={result} weights={customWeights} />
+        </TabsContent>
       </Tabs>
 
       {/* Risk Scoring Editor Panel */}
@@ -1198,7 +1271,7 @@ export default function Dashboard() {
           }}
         >
           <SlidersHorizontal className="w-4 h-4" />
-          Điều chỉnh Risk Scoring
+          Risk Weighting - Tầm quan trọng chỉ số
           {scoringPanelOpen ? (
             <ChevronUp className="w-4 h-4 ml-auto" />
           ) : (
@@ -1245,16 +1318,22 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
     return m;
   }, [indicators, result, latestYear]);
 
-  // Chart data: target vs median for each indicator
+  // Chart data: % difference from median for each indicator
   const chartData = useMemo(() => {
-    return indicators.map((ind) => ({
-      id: ind.id,
-      name: ind.name.length > 20 ? ind.name.substring(0, 18) + "..." : ind.name,
-      fullName: ind.name,
-      target: ind.company_value,
-      median: medians[ind.id],
-      risk: ind.risk_level,
-    }));
+    return indicators.map((ind) => {
+      const med = medians[ind.id] ?? ind.industry_median;
+      let pctDiff: number | null = null;
+      if (ind.company_value !== null && med !== null && med !== 0) {
+        pctDiff = ((ind.company_value - med) / Math.abs(med)) * 100;
+      }
+      return {
+        id: ind.id,
+        name: ind.name.length > 25 ? ind.name.substring(0, 23) + "..." : ind.name,
+        fullName: ind.name,
+        pctDiff,
+        risk: ind.risk_level,
+      };
+    }).filter(d => d.pctDiff !== null);
   }, [indicators, medians]);
 
   return (
@@ -1360,29 +1439,36 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
         </CardContent>
       </Card>
 
-      {/* Per-indicator bar chart: Target vs Median */}
-      {hasComparisons && (
+      {/* Per-indicator diverging bar chart: % difference from median */}
+      {chartData.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">
-              So sánh {target.company.ma_ck} vs Trung vị ({latestYear})
+              % Lệch so với Trung vị ngành – {target.company.ma_ck} ({latestYear})
             </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Dương (+) = cao hơn trung vị ngành, âm (−) = thấp hơn trung vị ngành
+            </p>
           </CardHeader>
           <CardContent>
-            <div className="h-[400px]">
+            <div className="h-[480px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={chartData.filter((d) => d.target !== null && d.median !== null)}
+                  data={chartData}
                   layout="vertical"
-                  margin={{ left: 10, right: 20 }}
+                  margin={{ left: 10, right: 40 }}
                   barCategoryGap="20%"
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" horizontal={false} />
-                  <XAxis type="number" fontSize={10} />
+                  <XAxis
+                    type="number"
+                    fontSize={10}
+                    tickFormatter={(v) => `${v.toFixed(0)}%`}
+                  />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={130}
+                    width={140}
                     fontSize={9}
                     tick={{ fill: "hsl(215, 10%, 45%)" }}
                   />
@@ -1392,14 +1478,28 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                       border: "1px solid hsl(214, 14%, 89%)",
                       fontSize: "12px",
                     }}
-                    formatter={(value: any, name: string) => [
-                      typeof value === "number" ? value.toFixed(4) : value,
-                      name,
+                    formatter={(value: any, _name: string, props: any) => [
+                      typeof value === "number" ? `${value.toFixed(1)}%` : value,
+                      `${props.payload.fullName} vs trung vị`,
                     ]}
                   />
-                  <Legend iconSize={10} wrapperStyle={{ fontSize: "12px" }} />
-                  <Bar dataKey="target" name={target.company.ma_ck} fill="hsl(144, 97%, 27%)" radius={[0, 2, 2, 0]} barSize={10} />
-                  <Bar dataKey="median" name="Trung vị" fill="hsl(25, 90%, 50%)" radius={[0, 2, 2, 0]} barSize={10} />
+                  <ReferenceLine x={0} stroke="hsl(215, 20%, 50%)" strokeWidth={1.5} />
+                  <Bar dataKey="pctDiff" name="% lệch trung vị" radius={[0, 2, 2, 0]} barSize={10}>
+                    {chartData.map((entry) => (
+                      <Cell
+                        key={entry.id}
+                        fill={
+                          entry.risk === "red"
+                            ? "hsl(0, 72%, 48%)"
+                            : entry.risk === "yellow"
+                            ? "hsl(45, 90%, 45%)"
+                            : (entry.pctDiff ?? 0) >= 0
+                            ? "hsl(144, 55%, 40%)"
+                            : "hsl(215, 60%, 55%)"
+                        }
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2512,6 +2612,154 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
 }
 
 /* ========== RISK DIAGRAM VIEW (BUBBLE CHART) ========== */
+/* ========== COMPOSITE SCORE EXPLANATION ========== */
+function CompositeScoreExplanation({
+  result,
+  weights,
+}: {
+  result: AnalysisResult;
+  weights: Record<string, number>;
+}) {
+  const { target } = result;
+  const latestYear = target.years[0];
+  const indicators = target.indicators[latestYear] || [];
+
+  const rows = indicators.map((ind) => {
+    const w = weights[ind.id] ?? 3;
+    const r1 = (ind as any).risk_level_1 || ind.risk_level;
+    const r2 = (ind as any).risk_level_2 || "gray";
+    const rr1Score = r1 === "red" ? 2 : 0;
+    const rr2Score = r2 === "red" ? 2 : 0;
+    const totalScore = rr1Score + rr2Score;
+    const weightedContrib = totalScore * w;
+    const maxContrib = 4 * w;
+    return { ind, w, rr1Score, rr2Score, totalScore, weightedContrib, maxContrib };
+  });
+
+  const totalWeightedRisk = rows.reduce((sum, r) => sum + r.weightedContrib, 0);
+  const totalWeightedMax = rows.reduce((sum, r) => sum + r.maxContrib, 0);
+  const compositeScore = totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
+
+  const scoreColor =
+    compositeScore >= 60
+      ? "hsl(0, 72%, 48%)"
+      : compositeScore >= 35
+      ? "hsl(45, 90%, 45%)"
+      : "hsl(142, 55%, 40%)";
+
+  const WEIGHT_LABELS: Record<number, string> = {
+    1: "Rất thấp", 2: "Thấp", 3: "Trung bình", 4: "Cao", 5: "Rất cao",
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">
+            Giải thích cách tính điểm rủi ro tổng hợp
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Formula */}
+          <div className="rounded-xl p-4 border" style={{ background: "hsl(214, 10%, 97%)", borderColor: "hsl(144, 97%, 27%)" }}>
+            <p className="text-sm font-bold mb-2" style={{ color: "hsl(144, 77%, 35%)" }}>Công thức:</p>
+            <p className="text-sm font-mono">Điểm = Σ(Điểm rủi ro × Trọng số) / Σ(Điểm tối đa × Trọng số) × 100</p>
+            <div className="mt-3 text-xs text-muted-foreground space-y-1">
+              <p>• Mỗi chỉ số có điểm rủi ro tối đa = 4 (2 cho RR1 + 2 cho RR2)</p>
+              <p>• Trọng số từ 1 (ít quan trọng) đến 5 (rất quan trọng)</p>
+              <p>• Nếu RR1 = "Rủi ro" (ngưỡng CQT vi phạm): +2 điểm</p>
+              <p>• Nếu RR2 = "Rủi ro" (ngoài IQR ngành): +2 điểm</p>
+            </div>
+          </div>
+
+          {/* Final score */}
+          <div className="flex items-center gap-4 p-4 rounded-xl border" style={{ borderColor: `${scoreColor}40` }}>
+            <div className="text-4xl font-bold tabular-nums" style={{ color: scoreColor }}>{compositeScore}</div>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: scoreColor }}>Điểm rủi ro: {compositeScore}/100</p>
+              <p className="text-xs text-muted-foreground">
+                = ({totalWeightedRisk} / {totalWeightedMax}) × 100
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {compositeScore >= 60 ? "Rủi ro cao – cần kiểm tra ngạy" : compositeScore >= 35 ? "Rủi ro trung bình – theo dõi chặt chẽ" : "Rủi ro thấp – tương đối an toàn"}
+              </p>
+            </div>
+          </div>
+
+          {/* Detailed table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr style={{ background: "hsl(214, 10%, 95%)" }}>
+                  <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
+                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
+                  <th className="text-center px-3 py-2 font-semibold border-b border-border">RR1 (0/2)</th>
+                  <th className="text-center px-3 py-2 font-semibold border-b border-border">RR2 (0/2)</th>
+                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Tổng điểm</th>
+                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Đóng góp có trọng số</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ ind, w, rr1Score, rr2Score, totalScore, weightedContrib, maxContrib }) => (
+                  <tr
+                    key={ind.id}
+                    className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+                    style={{
+                      background: totalScore === 4 ? "hsl(0, 72%, 98%)" : totalScore > 0 ? "hsl(25, 100%, 98%)" : undefined,
+                    }}
+                  >
+                    <td className="px-3 py-2">
+                      <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
+                      <span>{ind.name}</span>
+                    </td>
+                    <td className="text-center px-3 py-2">
+                      <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>
+                        {w} – {WEIGHT_LABELS[w]}
+                      </span>
+                    </td>
+                    <td className="text-center px-3 py-2">
+                      <span style={{ color: rr1Score > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                        {rr1Score}
+                      </span>
+                    </td>
+                    <td className="text-center px-3 py-2">
+                      <span style={{ color: rr2Score > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                        {rr2Score}
+                      </span>
+                    </td>
+                    <td className="text-center px-3 py-2 font-semibold">
+                      <span style={{ color: totalScore === 4 ? "hsl(0, 72%, 45%)" : totalScore > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                        {totalScore}
+                      </span>
+                    </td>
+                    <td className="text-center px-3 py-2">
+                      <span className="font-mono">{weightedContrib} / {maxContrib}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: "hsl(214, 10%, 93%)" }}>
+                  <td className="px-3 py-2 font-bold" colSpan={5}>Tổng cộng</td>
+                  <td className="text-center px-3 py-2 font-bold">
+                    {totalWeightedRisk} / {totalWeightedMax}
+                  </td>
+                </tr>
+                <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
+                  <td className="px-3 py-2 font-bold" colSpan={5}>Điểm rủi ro tổng hợp</td>
+                  <td className="text-center px-3 py-2 font-bold text-lg">
+                    {compositeScore} / 100
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function RiskDiagramView({
   result,
   weights,
@@ -2523,6 +2771,23 @@ function RiskDiagramView({
   const allYears = target.years;
   const [selectedYear, setSelectedYear] = useState<string>("avg");
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
+
+  const DIAGRAM_GROUPS = [
+    "CRITICAL RED LINES",
+    "DOANH THU - LỢI NBUẬN - THUế",
+    "RỦI RO NỢ THUế - HÓA ĐƠN",
+    "VẬN HÀNH - HIỆU QUẢ",
+  ];
+
+  function toggleGroup(group: string) {
+    setHiddenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }
 
   // Build indicator list for the selected year or average
   const indicators = useMemo(() => {
@@ -2542,47 +2807,60 @@ function RiskDiagramView({
   // Build diagram data
   const diagramData = useMemo(() => {
     return indicators
-      .filter((ind) => !hiddenIds.has(ind.id))
+      .filter((ind) => !hiddenIds.has(ind.id) && !hiddenGroups.has(ind.group))
       .map((ind) => {
         const w = weights[ind.id] ?? 3;
 
-        // X: RR1 safety score (-1 to 1)
-        let x = 0;
         const r1 = ind.risk_level_1 || ind.risk_level;
-        if (r1 === "green") x = 1;
-        else if (r1 === "red") x = -1;
-
-        // Y: RR2 safety score (IQR deviation, -1 to 1)
-        let y = 0;
         const r2 = ind.risk_level_2 || "gray";
-        if (r2 === "green") y = 0.5;
-        else if (r2 === "red") {
+
+        // X: RR1 risk deviation (0 = safe, positive = risky)
+        // Simplified: red = 1 (has threshold risk), green = 0 (safe), gray = 0.1 (unknown)
+        let x = 0;
+        if (r1 === "red") x = 1;
+        else if (r1 === "gray") x = 0.1;
+        // else green = 0
+
+        // Y: RR2 risk deviation from IQR (0 = within IQR, positive = outside IQR)
+        let y = 0;
+        if (r2 === "red") {
           if (
             ind.company_value !== null &&
-            ind.industry_median !== null &&
             ind.industry_p_low !== null &&
             ind.industry_p_high !== null
           ) {
-            const iqr = ind.industry_p_high - ind.industry_p_low;
+            const iqr = Math.abs(ind.industry_p_high - ind.industry_p_low);
             if (iqr > 0) {
-              const dist = (ind.company_value - ind.industry_median) / iqr;
-              y = -Math.min(Math.abs(dist), 2) / 2;
+              if (ind.company_value < ind.industry_p_low) {
+                y = Math.min((ind.industry_p_low - ind.company_value) / iqr, 2);
+              } else if (ind.company_value > ind.industry_p_high) {
+                y = Math.min((ind.company_value - ind.industry_p_high) / iqr, 2);
+              } else {
+                y = 0.5; // within IQR but flagged red - small positive
+              }
             } else {
-              y = -0.5;
+              y = 1;
             }
           } else {
-            y = -0.5;
+            y = 1;
           }
+        } else if (r2 === "gray") {
+          y = 0.1;
         }
+        // else green = 0
 
-        // Z: bubble size based on weight (1=most important=largest)
-        const z = (6 - w) * 80;
+        // Z: bubble size based on weight (5=most important=largest)
+        const z = w * 80;
 
-        // Color by combined risk
+        // Color by quadrant:
+        // Top-right (both risky) = red
+        // Bottom-right (RR1 risky only) = orange
+        // Top-left (RR2 risky only) = yellow
+        // Bottom-left (low risk) = green
         let color = "hsl(142, 55%, 45%)";
         if (r1 === "red" && r2 === "red") color = "hsl(0, 72%, 48%)";
-        else if (r1 === "red") color = "hsl(25, 90%, 50%)";
-        else if (r2 === "red") color = "hsl(45, 90%, 45%)";
+        else if (r1 === "red" && r2 !== "red") color = "hsl(25, 90%, 50%)";
+        else if (r1 !== "red" && r2 === "red") color = "hsl(45, 90%, 45%)";
 
         return {
           id: ind.id,
@@ -2597,12 +2875,19 @@ function RiskDiagramView({
           color,
         };
       });
-  }, [indicators, weights, hiddenIds]);
+  }, [indicators, weights, hiddenIds, hiddenGroups]);
 
   const allIndicatorIds = useMemo(() => {
     const firstYear = allYears[0];
     if (!firstYear) return [];
-    return (target.indicators[firstYear] || []).map((i) => ({ id: i.id, name: i.name }));
+    return (target.indicators[firstYear] || []).map((i) => ({ id: i.id, name: i.name, group: i.group }));
+  }, [target, allYears]);
+
+  const allGroups = useMemo(() => {
+    const firstYear = allYears[0];
+    if (!firstYear) return DIAGRAM_GROUPS;
+    const groups = Array.from(new Set((target.indicators[firstYear] || []).map((i) => i.group)));
+    return groups.length > 0 ? groups : DIAGRAM_GROUPS;
   }, [target, allYears]);
 
   function toggleHide(id: string) {
@@ -2623,7 +2908,7 @@ function RiskDiagramView({
       <div className="bg-card border border-border rounded-lg p-3 text-xs shadow-lg max-w-[220px]">
         <p className="font-bold text-sm mb-1">{d.id} – {d.name}</p>
         <p>Giá trị: {d.value !== null && d.value !== undefined ? Number(d.value).toFixed(3) : "N/A"}</p>
-        <p>Trọng số: {d.weight} ({["Rất cao", "Cao", "Trung bình", "Thấp", "Rất thấp"][d.weight - 1]})</p>
+        <p>Trọng số: {d.weight} ({["Rất thấp", "Thấp", "Trung bình", "Cao", "Rất cao"][d.weight - 1]})</p>
         <p style={{ color: d.risk1 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
           RR1 (Ngưỡng CQT): {d.risk1 === "red" ? "Rủi ro" : d.risk1 === "green" ? "An toàn" : "Không xác định"}
         </p>
@@ -2657,7 +2942,7 @@ function RiskDiagramView({
             Risk Diagram – {target.company.ma_ck}
           </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Phân tích rủi ro theo 2 chiều: Ngưỡng CQT (RR1) và So sánh ngành (RR2). Kích thước buử = mức quan trọng.
+            Phân tích rủi ro theo 2 chiều: X = RR1 (ngưỡng CQT), Y = RR2 (lệch IQR ngành). Góc phải trên = rủi ro cao nhất. Kích thước bong bóng = trọng số chỉ số.
           </p>
         </CardHeader>
         <CardContent>
@@ -2679,40 +2964,58 @@ function RiskDiagramView({
             </div>
           </div>
 
+          {/* Group toggles */}
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Nhóm chỉ số:</p>
+            <div className="flex flex-wrap gap-2">
+              {allGroups.map((group) => {
+                const isHidden = hiddenGroups.has(group);
+                return (
+                  <button
+                    key={group}
+                    onClick={() => toggleGroup(group)}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium border transition-all"
+                    style={{
+                      background: isHidden ? "hsl(214, 10%, 97%)" : "hsl(144, 50%, 12%)",
+                      borderColor: isHidden ? "hsl(214, 10%, 80%)" : "hsl(144, 97%, 27%)",
+                      color: isHidden ? "hsl(215, 20%, 50%)" : "hsl(144, 77%, 50%)",
+                      opacity: isHidden ? 0.6 : 1,
+                    }}
+                  >
+                    {isHidden ? "☐" : "☑"} {group}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Legend for quadrants */}
           <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
             <div className="rounded-lg p-2 border" style={{ background: "hsl(142, 55%, 97%)", borderColor: "hsl(142, 55%, 85%)" }}>
-              <span className="font-semibold text-green-700">■</span> Góc phải trên (an toàn cả 2 chiều)
+              <span className="font-semibold text-green-700">■</span> Góc trái dưới – Rủi ro thấp cả 2 chiều (an toàn)
             </div>
             <div className="rounded-lg p-2 border" style={{ background: "hsl(45, 90%, 97%)", borderColor: "hsl(45, 90%, 80%)" }}>
-              <span className="font-semibold" style={{ color: "hsl(45,90%,40%)" }}>■</span> Góc trái trên (rủi ro ngưỡng, an toàn ngành)
+              <span className="font-semibold" style={{ color: "hsl(45,90%,40%)" }}>■</span> Góc trái trên – Chỉ rủi ro RR2 (lệch IQR ngành)
             </div>
             <div className="rounded-lg p-2 border" style={{ background: "hsl(25, 90%, 97%)", borderColor: "hsl(25, 90%, 80%)" }}>
-              <span className="font-semibold" style={{ color: "hsl(25,90%,45%)" }}>■</span> Góc phải dưới (an toàn ngưỡng, rủi ro ngành)
+              <span className="font-semibold" style={{ color: "hsl(25,90%,45%)" }}>■</span> Góc phải dưới – Chỉ rủi ro RR1 (ngưỡng CQT)
             </div>
             <div className="rounded-lg p-2 border" style={{ background: "hsl(0, 72%, 97%)", borderColor: "hsl(0, 72%, 85%)" }}>
-              <span className="font-semibold text-red-600">■</span> Góc trái dưới (rủi ro cả 2 chiều)
+              <span className="font-semibold text-red-600">■</span> Góc phải trên – Rủi ro cao cả 2 chiều (nguy hiểm)
             </div>
           </div>
 
           {/* Chart */}
           <ResponsiveContainer width="100%" height={420}>
             <ScatterChart margin={{ top: 20, right: 30, bottom: 30, left: 30 }}>
-              {/* Quadrant backgrounds */}
-              <defs>
-                <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="hsl(142, 55%, 97%)" />
-                  <stop offset="100%" stopColor="hsl(0, 72%, 97%)" />
-                </linearGradient>
-              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 90%)" />
               <XAxis
                 type="number"
                 dataKey="x"
-                domain={[-1.5, 1.5]}
+                domain={[0, 1.5]}
                 tickCount={7}
                 label={{
-                  value: "Mức độ an toàn – Ngưỡng CQT (RR1)",
+                  value: "Mức độ rủi ro RR1 (Ngưỡng CQT)",
                   position: "insideBottom",
                   offset: -15,
                   fontSize: 11,
@@ -2723,10 +3026,10 @@ function RiskDiagramView({
               <YAxis
                 type="number"
                 dataKey="y"
-                domain={[-1.5, 1]}
+                domain={[0, 2.5]}
                 tickCount={6}
                 label={{
-                  value: "Mức độ an toàn – So sánh ngành (RR2)",
+                  value: "Mức độ rủi ro RR2 (Lệch IQR ngành)",
                   angle: -90,
                   position: "insideLeft",
                   offset: 10,
@@ -2736,8 +3039,8 @@ function RiskDiagramView({
                 tick={{ fontSize: 10 }}
               />
               <ZAxis type="number" dataKey="z" range={[40, 500]} />
-              <ReferenceLine x={0} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
-              <ReferenceLine y={0} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+              <ReferenceLine x={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+              <ReferenceLine y={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
               <RechartsTooltip content={<CustomTooltip />} />
               <Scatter
                 data={diagramData}
@@ -2780,20 +3083,20 @@ function RiskDiagramView({
 }
 
 /* ========== RISK SCORING EDITOR ========== */
-const WEIGHT_FACTORS: Record<number, number> = { 1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2 };
+const WEIGHT_FACTORS: Record<number, number> = { 1: 0.2, 2: 0.4, 3: 0.6, 4: 0.8, 5: 1.0 };
 const WEIGHT_LABELS_SCORING: Record<number, string> = {
-  1: "Rất cao",
-  2: "Cao",
+  1: "Rất thấp",
+  2: "Thấp",
   3: "Trung bình",
-  4: "Thấp",
-  5: "Rất thấp",
+  4: "Cao",
+  5: "Rất cao",
 };
 const WEIGHT_COLORS_SCORING: Record<number, string> = {
-  1: "hsl(0, 72%, 48%)",
-  2: "hsl(25, 90%, 50%)",
+  1: "hsl(215, 20%, 60%)",
+  2: "hsl(142, 55%, 40%)",
   3: "hsl(45, 90%, 50%)",
-  4: "hsl(142, 55%, 40%)",
-  5: "hsl(215, 20%, 60%)",
+  4: "hsl(25, 90%, 50%)",
+  5: "hsl(0, 72%, 48%)",
 };
 
 const INDICATOR_NAMES_SCORING: Record<string, string> = {
@@ -2827,26 +3130,19 @@ function calcCompositeScore(
   indicators: TiraIndicator[],
   weights: Record<string, number>
 ): number {
-  // Weighted average: score = Σ(risk_points × factor) / Σ(max_points × factor) × 100
-  // weight 1 (most important) → factor 5, weight 5 (least important) → factor 1
   let totalWeightedRisk = 0;
   let totalWeightedMax = 0;
-
   for (const ind of indicators) {
     const w = weights[ind.id] ?? 3;
-    const factor = 6 - w; // weight 1→5, weight 2→4, weight 3→3, weight 4→2, weight 5→1
-
+    const factor = w; // Now 5=most important, 1=least
     let riskPoints = 0;
     const r1 = (ind as any).risk_level_1 || ind.risk_level;
     const r2 = (ind as any).risk_level_2 || "gray";
     if (r1 === "red") riskPoints += 2;
     if (r2 === "red") riskPoints += 2;
-    // max per indicator = 4
-
     totalWeightedRisk += riskPoints * factor;
     totalWeightedMax += 4 * factor;
   }
-
   return totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
 }
 
@@ -2897,7 +3193,7 @@ function RiskScoringEditor({
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Điều chỉnh trọng số từng chỉ số để tính điểm rủi ro theo mức ưu tiên riêng.
-          Mức 1 = quan trọng nhất, Mức 5 = ít quan trọng nhất.
+          Mức 5 = quan trọng nhất, Mức 1 = ít quan trọng nhất.
         </p>
       </CardHeader>
       <CardContent>
