@@ -65,6 +65,9 @@ import {
   Line,
   Cell,
   ReferenceLine,
+  ScatterChart,
+  Scatter,
+  ZAxis,
 } from "recharts";
 
 interface TiraIndicator {
@@ -519,7 +522,7 @@ export default function Dashboard() {
   const [isExporting, setIsExporting] = useState(false);
   const [aiReportOpen, setAiReportOpen] = useState(false);
   const [aiReportTypes, setAiReportTypes] = useState<string[]>(["financial", "tax"]);
-  const [aiModel, setAiModel] = useState("claude-haiku");
+  const [aiModel, setAiModel] = useState("anthropic");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiReportContent, setAiReportContent] = useState<string | null>(null);
   const [aiReportError, setAiReportError] = useState<string | null>(null);
@@ -527,6 +530,7 @@ export default function Dashboard() {
   const [aiSaved, setAiSaved] = useState(false);
   const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
+  const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
 
   const params = useMemo(() => {
     return getHashParams();
@@ -774,6 +778,25 @@ export default function Dashboard() {
     }
   }, [result, ticker, aiReportContent, aiReportTypes]);
 
+  const handleSaveAnalysis = useCallback(async () => {
+    if (!result) return;
+    setIsSavingAnalysis(true);
+    try {
+      await apiRequest("POST", "/api/analyses/save", {
+        ticker,
+        report_type: reportType,
+        years,
+        comparisons,
+        percentile_low: percentileLow,
+        percentile_high: percentileHigh,
+      });
+    } catch (err) {
+      // silent fail
+    } finally {
+      setIsSavingAnalysis(false);
+    }
+  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh]);
+
   if (!ticker && !isCustom) {
     return (
       <div className="p-8 text-center">
@@ -867,6 +890,17 @@ export default function Dashboard() {
             <Sparkles className="w-4 h-4" />
             Tạo báo cáo AI
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSaveAnalysis}
+            disabled={isSavingAnalysis}
+            data-testid="button-save-analysis"
+            className="gap-2"
+          >
+            <Save className="w-4 h-4" />
+            {isSavingAnalysis ? "Đang lưu..." : "Lưu phân tích"}
+          </Button>
         </div>
       </div>
 
@@ -923,11 +957,12 @@ export default function Dashboard() {
               <p className="text-sm font-semibold mb-2">Mô hình AI</p>
               <Select value={aiModel} onValueChange={setAiModel}>
                 <SelectTrigger className="w-full" data-testid="select-ai-model">
-                  <SelectValue />
+                  <SelectValue placeholder="Chọn AI Model" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="claude-haiku">Claude Haiku (mặc định)</SelectItem>
-                  <SelectItem value="deepseek-reasoner">DeepSeek Reasoner</SelectItem>
+                  <SelectItem value="anthropic">Anthropic</SelectItem>
+                  <SelectItem value="deepseek">DeepSeek</SelectItem>
+                  <SelectItem value="openai">ChatGPT</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1118,6 +1153,7 @@ export default function Dashboard() {
           <TabsTrigger value="detail" data-testid="tab-detail">Chi tiết</TabsTrigger>
           <TabsTrigger value="analysis" data-testid="tab-analysis">Phân tích</TabsTrigger>
           <TabsTrigger value="risk-heatmap" data-testid="tab-risk-heatmap">Biểu đồ nhiệt</TabsTrigger>
+          <TabsTrigger value="risk-diagram" data-testid="tab-risk-diagram">Risk Diagram</TabsTrigger>
         </TabsList>
 
         <TabsContent value="heatmap" className="mt-4">
@@ -1142,6 +1178,10 @@ export default function Dashboard() {
 
         <TabsContent value="risk-heatmap" className="mt-4">
           <RiskHeatmapView result={result} />
+        </TabsContent>
+
+        <TabsContent value="risk-diagram" className="mt-4">
+          <RiskDiagramView result={result} weights={customWeights} />
         </TabsContent>
       </Tabs>
 
@@ -2471,6 +2511,274 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
   );
 }
 
+/* ========== RISK DIAGRAM VIEW (BUBBLE CHART) ========== */
+function RiskDiagramView({
+  result,
+  weights,
+}: {
+  result: AnalysisResult;
+  weights: Record<string, number>;
+}) {
+  const { target } = result;
+  const allYears = target.years;
+  const [selectedYear, setSelectedYear] = useState<string>("avg");
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+
+  // Build indicator list for the selected year or average
+  const indicators = useMemo(() => {
+    if (selectedYear !== "avg") {
+      return target.indicators[selectedYear] || [];
+    }
+    // Average across all years: pick first year's list as base, average values
+    const firstYear = allYears[0];
+    if (!firstYear) return [];
+    const base = target.indicators[firstYear] || [];
+    return base.map((baseInd) => {
+      // For averaging, we use the risk levels of the most recent year (first)
+      return baseInd;
+    });
+  }, [selectedYear, target, allYears]);
+
+  // Build diagram data
+  const diagramData = useMemo(() => {
+    return indicators
+      .filter((ind) => !hiddenIds.has(ind.id))
+      .map((ind) => {
+        const w = weights[ind.id] ?? 3;
+
+        // X: RR1 safety score (-1 to 1)
+        let x = 0;
+        const r1 = ind.risk_level_1 || ind.risk_level;
+        if (r1 === "green") x = 1;
+        else if (r1 === "red") x = -1;
+
+        // Y: RR2 safety score (IQR deviation, -1 to 1)
+        let y = 0;
+        const r2 = ind.risk_level_2 || "gray";
+        if (r2 === "green") y = 0.5;
+        else if (r2 === "red") {
+          if (
+            ind.company_value !== null &&
+            ind.industry_median !== null &&
+            ind.industry_p_low !== null &&
+            ind.industry_p_high !== null
+          ) {
+            const iqr = ind.industry_p_high - ind.industry_p_low;
+            if (iqr > 0) {
+              const dist = (ind.company_value - ind.industry_median) / iqr;
+              y = -Math.min(Math.abs(dist), 2) / 2;
+            } else {
+              y = -0.5;
+            }
+          } else {
+            y = -0.5;
+          }
+        }
+
+        // Z: bubble size based on weight (1=most important=largest)
+        const z = (6 - w) * 80;
+
+        // Color by combined risk
+        let color = "hsl(142, 55%, 45%)";
+        if (r1 === "red" && r2 === "red") color = "hsl(0, 72%, 48%)";
+        else if (r1 === "red") color = "hsl(25, 90%, 50%)";
+        else if (r2 === "red") color = "hsl(45, 90%, 45%)";
+
+        return {
+          id: ind.id,
+          name: ind.name,
+          x,
+          y,
+          z,
+          risk1: r1,
+          risk2: r2,
+          value: ind.company_value,
+          weight: w,
+          color,
+        };
+      });
+  }, [indicators, weights, hiddenIds]);
+
+  const allIndicatorIds = useMemo(() => {
+    const firstYear = allYears[0];
+    if (!firstYear) return [];
+    return (target.indicators[firstYear] || []).map((i) => ({ id: i.id, name: i.name }));
+  }, [target, allYears]);
+
+  function toggleHide(id: string) {
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Custom tooltip
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0]?.payload;
+    if (!d) return null;
+    return (
+      <div className="bg-card border border-border rounded-lg p-3 text-xs shadow-lg max-w-[220px]">
+        <p className="font-bold text-sm mb-1">{d.id} – {d.name}</p>
+        <p>Giá trị: {d.value !== null && d.value !== undefined ? Number(d.value).toFixed(3) : "N/A"}</p>
+        <p>Trọng số: {d.weight} ({["Rất cao", "Cao", "Trung bình", "Thấp", "Rất thấp"][d.weight - 1]})</p>
+        <p style={{ color: d.risk1 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
+          RR1 (Ngưỡng CQT): {d.risk1 === "red" ? "Rủi ro" : d.risk1 === "green" ? "An toàn" : "Không xác định"}
+        </p>
+        <p style={{ color: d.risk2 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
+          RR2 (So sánh ngành): {d.risk2 === "red" ? "Rủi ro" : d.risk2 === "green" ? "An toàn" : "Không xác định"}
+        </p>
+      </div>
+    );
+  };
+
+  // Custom dot with label
+  const CustomDot = (props: any) => {
+    const { cx, cy, payload } = props;
+    if (!cx || !cy) return null;
+    const size = Math.sqrt(payload.z) * 1.2;
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={size / 2} fill={payload.color} fillOpacity={0.75} stroke={payload.color} strokeWidth={1.5} />
+        <text x={cx} y={cy + 4} textAnchor="middle" fontSize={9} fontWeight="bold" fill="white" pointerEvents="none">
+          {payload.id}
+        </text>
+      </g>
+    );
+  };
+
+  return (
+    <div className="space-y-4" data-testid="risk-diagram-view">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">
+            Risk Diagram – {target.company.ma_ck}
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Phân tích rủi ro theo 2 chiều: Ngưỡng CQT (RR1) và So sánh ngành (RR2). Kích thước buử = mức quan trọng.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {/* Controls */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium">Năm:</label>
+              <Select value={selectedYear} onValueChange={setSelectedYear}>
+                <SelectTrigger className="w-28 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="avg">Bình quân</SelectItem>
+                  {allYears.map((y) => (
+                    <SelectItem key={y} value={y}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Legend for quadrants */}
+          <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
+            <div className="rounded-lg p-2 border" style={{ background: "hsl(142, 55%, 97%)", borderColor: "hsl(142, 55%, 85%)" }}>
+              <span className="font-semibold text-green-700">■</span> Góc phải trên (an toàn cả 2 chiều)
+            </div>
+            <div className="rounded-lg p-2 border" style={{ background: "hsl(45, 90%, 97%)", borderColor: "hsl(45, 90%, 80%)" }}>
+              <span className="font-semibold" style={{ color: "hsl(45,90%,40%)" }}>■</span> Góc trái trên (rủi ro ngưỡng, an toàn ngành)
+            </div>
+            <div className="rounded-lg p-2 border" style={{ background: "hsl(25, 90%, 97%)", borderColor: "hsl(25, 90%, 80%)" }}>
+              <span className="font-semibold" style={{ color: "hsl(25,90%,45%)" }}>■</span> Góc phải dưới (an toàn ngưỡng, rủi ro ngành)
+            </div>
+            <div className="rounded-lg p-2 border" style={{ background: "hsl(0, 72%, 97%)", borderColor: "hsl(0, 72%, 85%)" }}>
+              <span className="font-semibold text-red-600">■</span> Góc trái dưới (rủi ro cả 2 chiều)
+            </div>
+          </div>
+
+          {/* Chart */}
+          <ResponsiveContainer width="100%" height={420}>
+            <ScatterChart margin={{ top: 20, right: 30, bottom: 30, left: 30 }}>
+              {/* Quadrant backgrounds */}
+              <defs>
+                <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="hsl(142, 55%, 97%)" />
+                  <stop offset="100%" stopColor="hsl(0, 72%, 97%)" />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 90%)" />
+              <XAxis
+                type="number"
+                dataKey="x"
+                domain={[-1.5, 1.5]}
+                tickCount={7}
+                label={{
+                  value: "Mức độ an toàn – Ngưỡng CQT (RR1)",
+                  position: "insideBottom",
+                  offset: -15,
+                  fontSize: 11,
+                  fill: "hsl(215, 20%, 50%)",
+                }}
+                tick={{ fontSize: 10 }}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                domain={[-1.5, 1]}
+                tickCount={6}
+                label={{
+                  value: "Mức độ an toàn – So sánh ngành (RR2)",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 10,
+                  fontSize: 11,
+                  fill: "hsl(215, 20%, 50%)",
+                }}
+                tick={{ fontSize: 10 }}
+              />
+              <ZAxis type="number" dataKey="z" range={[40, 500]} />
+              <ReferenceLine x={0} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+              <ReferenceLine y={0} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+              <RechartsTooltip content={<CustomTooltip />} />
+              <Scatter
+                data={diagramData}
+                shape={<CustomDot />}
+              >
+                {diagramData.map((entry) => (
+                  <Cell key={entry.id} fill={entry.color} />
+                ))}
+              </Scatter>
+            </ScatterChart>
+          </ResponsiveContainer>
+
+          {/* Indicator toggle checkboxes */}
+          <div className="mt-4">
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Hiển thị chỉ số:</p>
+            <div className="flex flex-wrap gap-2">
+              {allIndicatorIds.map(({ id, name }) => (
+                <label
+                  key={id}
+                  className="flex items-center gap-1.5 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hiddenIds.has(id)}
+                    onChange={() => toggleHide(id)}
+                    className="w-3 h-3"
+                  />
+                  <span className="text-xs font-mono">{id}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={name}>
+                    {name.length > 18 ? name.substring(0, 16) + "…" : name}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* ========== RISK SCORING EDITOR ========== */
 const WEIGHT_FACTORS: Record<number, number> = { 1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2 };
 const WEIGHT_LABELS_SCORING: Record<number, string> = {
@@ -2519,18 +2827,27 @@ function calcCompositeScore(
   indicators: TiraIndicator[],
   weights: Record<string, number>
 ): number {
-  let total = 0;
-  let max = 0;
+  // Weighted average: score = Σ(risk_points × factor) / Σ(max_points × factor) × 100
+  // weight 1 (most important) → factor 5, weight 5 (least important) → factor 1
+  let totalWeightedRisk = 0;
+  let totalWeightedMax = 0;
+
   for (const ind of indicators) {
     const w = weights[ind.id] ?? 3;
-    const f = WEIGHT_FACTORS[w] ?? 0.6;
-    let pts = 0;
-    if ((ind.risk_level_1 || ind.risk_level) === "red") pts += 2;
-    if ((ind.risk_level_2 || "gray") === "red") pts += 2;
-    total += pts * f;
-    max += 4 * f;
+    const factor = 6 - w; // weight 1→5, weight 2→4, weight 3→3, weight 4→2, weight 5→1
+
+    let riskPoints = 0;
+    const r1 = (ind as any).risk_level_1 || ind.risk_level;
+    const r2 = (ind as any).risk_level_2 || "gray";
+    if (r1 === "red") riskPoints += 2;
+    if (r2 === "red") riskPoints += 2;
+    // max per indicator = 4
+
+    totalWeightedRisk += riskPoints * factor;
+    totalWeightedMax += 4 * factor;
   }
-  return max > 0 ? Math.round((total / max) * 100) : 0;
+
+  return totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
 }
 
 function RiskScoringEditor({

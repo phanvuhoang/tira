@@ -380,7 +380,7 @@ export default function Home() {
                         className="px-3 py-1.5 text-sm gap-2"
                       >
                         <span className="font-semibold">{c.ma_ck}</span>
-                        <span className="text-muted-foreground text-xs truncate max-w-[120px]">
+                        <span className="text-muted-foreground text-xs truncate max-w-[150px]">
                           {c.ten_tv}
                         </span>
                         <button
@@ -461,13 +461,14 @@ export default function Home() {
                           key={c.ma_ck}
                           variant="ghost"
                           size="sm"
-                          className="h-7 text-xs px-2"
+                          className="h-auto text-xs px-2 py-1"
                           onClick={() => handleAddComparison(c)}
                           disabled={!!comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck)}
                           data-testid={`suggest-${c.ma_ck}`}
                         >
                           <Plus className="w-3 h-3 mr-1" />
-                          {c.ma_ck}
+                          <span className="font-semibold">{c.ma_ck}</span>
+                          <span className="text-muted-foreground ml-1 truncate max-w-[100px]">{c.ten_tv}</span>
                         </Button>
                       ))}
                     </div>

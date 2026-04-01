@@ -14,8 +14,12 @@ import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateComp
 const upload = multer({ dest: "/tmp/uploads/" });
 
 // ─────────────────────────────────────────────
-// AI clients (only initialised when keys present)
+// AI model configuration via env vars
 // ─────────────────────────────────────────────
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
 const anthropicClient = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
@@ -25,6 +29,10 @@ const deepseekClient = process.env.DEEPSEEK_API_KEY
       apiKey: process.env.DEEPSEEK_API_KEY,
       baseURL: "https://api.deepseek.com",
     })
+  : null;
+
+const openaiClient = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 
 // ─────────────────────────────────────────────
@@ -196,15 +204,34 @@ async function callDeepSeekModel(prompt: string, modelId: string): Promise<strin
   }
 }
 
+async function callOpenAIModel(prompt: string, modelId: string): Promise<string> {
+  if (!openaiClient) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+  try {
+    const completion = await openaiClient.chat.completions.create({
+      model: modelId,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 4096,
+    });
+    return completion.choices[0]?.message?.content || "";
+  } catch (err: any) {
+    throw new Error(`OpenAI API error: ${err.message || err}`);
+  }
+}
+
 async function generateReportText(
   prompt: string,
   aiModel: string
 ): Promise<string> {
   if (aiModel === "deepseek") {
-    return callDeepSeekModel(prompt, "deepseek-chat");
+    return callDeepSeekModel(prompt, DEEPSEEK_MODEL);
   }
-  // default: claude-haiku
-  return callAnthropicModel(prompt, "claude-3-5-haiku-20241022");
+  if (aiModel === "openai") {
+    return callOpenAIModel(prompt, OPENAI_MODEL);
+  }
+  // default: anthropic
+  return callAnthropicModel(prompt, ANTHROPIC_MODEL);
 }
 
 // ─────────────────────────────────────────────
@@ -657,11 +684,14 @@ export async function registerRoutes(httpServer: Server, app: Express) {
             "DEEPSEEK_API_KEY is not set. Please set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY environment variable.",
         });
       }
-      if (!usingDeepSeek && !anthropicClient) {
+      if (!usingDeepSeek && !anthropicClient && ai_model !== "openai") {
         return res.status(400).json({
           error:
             "ANTHROPIC_API_KEY is not set. Please set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.",
         });
+      }
+      if (ai_model === "openai" && !openaiClient) {
+        return res.status(400).json({ error: "OPENAI_API_KEY is not set." });
       }
 
       // Run analysis
@@ -946,6 +976,87 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
     if (!Array.isArray(indicators)) return res.status(400).json({ error: "indicators phải là array" });
     const result = calculateCompositeScore(indicators, weights);
     res.json(result);
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // FEATURE 4: Save / Load Analysis Params
+  // ════════════════════════════════════════════════════════════
+
+  // Save analysis
+  app.post("/api/analyses/save", (req: Request, res: Response) => {
+    try {
+      const { ticker, report_type, years, comparisons, percentile_low, percentile_high, name } = req.body;
+      let userId = "anonymous";
+      const authH = req.headers.authorization;
+      if (authH?.startsWith("Bearer ")) {
+        const p = verifyToken(authH.slice(7));
+        if (p) userId = p.id;
+      }
+
+      const analysis = {
+        id: uuidv4(),
+        name: name || `${ticker} - ${new Date().toLocaleDateString("vi-VN")}`,
+        ticker,
+        report_type,
+        years,
+        comparisons,
+        percentile_low: percentile_low || 25,
+        percentile_high: percentile_high || 75,
+        user_id: userId,
+        created_at: new Date().toISOString(),
+      };
+
+      // Load existing analyses
+      const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
+      let analyses: any[] = [];
+      try {
+        if (fs.existsSync(analysesFile)) {
+          analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
+        }
+      } catch {}
+      analyses.unshift(analysis);
+      fs.writeFileSync(analysesFile, JSON.stringify(analyses, null, 2));
+
+      res.json({ success: true, analysis });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // List analyses
+  app.get("/api/analyses", (req: Request, res: Response) => {
+    const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
+    let analyses: any[] = [];
+    try {
+      if (fs.existsSync(analysesFile)) {
+        analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
+      }
+    } catch {}
+
+    // Filter by user
+    const authH = req.headers.authorization;
+    if (authH?.startsWith("Bearer ")) {
+      const p = verifyToken(authH.slice(7));
+      if (p && p.role !== "admin") {
+        analyses = analyses.filter((a: any) => a.user_id === p.id || a.user_id === "anonymous");
+      }
+    }
+
+    res.json(analyses);
+  });
+
+  // Delete analysis
+  app.delete("/api/analyses/:id", (req: Request, res: Response) => {
+    const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
+    let analyses: any[] = [];
+    try {
+      if (fs.existsSync(analysesFile)) {
+        analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
+      }
+    } catch {}
+    analyses = analyses.filter((a: any) => a.id !== req.params.id);
+    fs.writeFileSync(analysesFile, JSON.stringify(analyses, null, 2));
+    res.json({ success: true });
   });
 
   return httpServer;
