@@ -682,7 +682,7 @@ export default function Dashboard() {
 
   // Export handler
   const handleExport = useCallback(async () => {
-    if (!result) return;
+    if (!result || !summaryStats) return;
     setIsExporting(true);
     try {
       const pptxgenjs = await import("pptxgenjs");
@@ -691,109 +691,130 @@ export default function Dashboard() {
       pptx.layout = "LAYOUT_WIDE";
 
       const { target, comparisons: comps } = result;
-      const latestYear = target.years[0];
-      const indicators = target.indicators[latestYear] || [];
       const compEntries = Object.entries(comps);
+      const allYears = target.years;
+
+      // Helper: add text to slide
+      const addText = (slide: any, text: string, opts: any) => slide.addText(text, opts);
 
       // --- Slide 1: Title ---
-      const slide1 = pptx.addSlide();
-      slide1.background = { color: "1A2332" };
-      slide1.addText("TIRA - Tax Index Risk Analysis", { x: 0.8, y: 1.0, w: 8.5, h: 1, fontSize: 28, color: "FFFFFF", fontFace: "Arial", bold: true });
-      slide1.addText(`${target.company.ma_ck} - ${target.company.ten_tv}`, { x: 0.8, y: 2.0, w: 8.5, h: 0.6, fontSize: 20, color: "2DD4BF" });
-      slide1.addText(`Báo cáo: ${target.report_type === "Parent" ? "Công ty mẹ" : "Hợp nhất"} | Năm: ${target.years.join(", ")}`, { x: 0.8, y: 2.7, w: 8.5, h: 0.5, fontSize: 14, color: "94A3B8" });
+      const s1 = pptx.addSlide();
+      s1.background = { color: "1A2332" };
+      addText(s1, "TIRA - Tax Index Risk Analysis", { x: 0.8, y: 1.2, w: 8.5, h: 0.8, fontSize: 28, color: "FFFFFF", bold: true });
+      addText(s1, `${target.company.ma_ck} - ${target.company.ten_tv}`, { x: 0.8, y: 2.2, w: 8.5, h: 0.6, fontSize: 20, color: "028A39" });
+      addText(s1, `Báo cáo: ${target.report_type === "Parent" ? "Công ty mẹ" : "Hợp nhất"} | Năm: ${allYears.join(", ")}`, { x: 0.8, y: 3.0, w: 8.5, h: 0.4, fontSize: 14, color: "94A3B8" });
       if (compEntries.length > 0) {
-        slide1.addText(`So sánh: ${compEntries.map(([, v]) => v.company.ma_ck).join(", ")}`, { x: 0.8, y: 3.2, w: 8.5, h: 0.5, fontSize: 14, color: "94A3B8" });
+        addText(s1, `So sánh: ${compEntries.map(([, v]) => v.company.ma_ck).join(", ")}`, { x: 0.8, y: 3.5, w: 8.5, h: 0.4, fontSize: 14, color: "94A3B8" });
       }
 
-      // --- Slide 2: KPI Summary ---
-      if (summaryStats) {
-        const slide2 = pptx.addSlide();
-        slide2.addText("Tổng quan rủi ro", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 20, color: "1A2332", bold: true });
-        const kpiData = [
-          ["Rủi ro cao", String(summaryStats.reds), "E53935"],
-          ["Cần chú ý", String(summaryStats.yellows), "F59E0B"],
-          ["An toàn", String(summaryStats.greens), "2E7D32"],
-          ["Thiếu dữ liệu", String(summaryStats.grays), "94A3B8"],
-          ["Điểm rủi ro", `${summaryStats.riskScore.toFixed(0)}/100`, "1A2332"],
+      // --- Slide 2: Dashboard KPIs ---
+      const s2 = pptx.addSlide();
+      addText(s2, "Tổng quan rủi ro", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 20, bold: true });
+      addText(s2, `Điểm rủi ro BQ: ${summaryStats.riskScore}/100`, { x: 0.5, y: 1.0, w: 4, h: 0.4, fontSize: 16, color: "C62828", bold: true });
+      addText(s2, `RR1: ${summaryStats.risk1Reds} | RR2: ${summaryStats.risk2Reds} | An toàn: ${summaryStats.greens}`, { x: 0.5, y: 1.5, w: 8, h: 0.4, fontSize: 12 });
+
+      // Per-year scores table
+      if (summaryStats.yearScores) {
+        const scoreRows: any[][] = [
+          [
+            { text: "Năm", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 10 } },
+            { text: "Điểm RR", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 10 } },
+          ]
         ];
-        kpiData.forEach(([label, val, color], i) => {
-          const xPos = 0.5 + i * 1.8;
-          slide2.addShape(pptxgenjs.default ? "rect" : ("rect" as any), { x: xPos, y: 1.0, w: 1.6, h: 1.2, fill: { color: "F1F5F9" }, rectRadius: 0.1 });
-          slide2.addText(val, { x: xPos, y: 1.0, w: 1.6, h: 0.8, fontSize: 24, color, bold: true, align: "center", valign: "bottom" });
-          slide2.addText(label, { x: xPos, y: 1.7, w: 1.6, h: 0.4, fontSize: 10, color: "64748B", align: "center" });
-        });
+        for (const ys of summaryStats.yearScores) {
+          scoreRows.push([
+            { text: ys.year, options: { fontSize: 10 } },
+            { text: `${ys.score}/100`, options: { fontSize: 10, color: ys.score > 50 ? "C62828" : ys.score > 25 ? "F57F17" : "2E7D32" } },
+          ]);
+        }
+        s2.addTable(scoreRows, { x: 0.5, y: 2.2, w: 4, colW: [2, 2], fontSize: 10, rowH: 0.3, border: { pt: 0.5, color: "E0E0E0" } });
       }
 
-      // --- Slide 3: Heatmap ---
-      const slide3 = pptx.addSlide();
-      slide3.addText(`Bảng nhiệt - ${target.company.ma_ck} (${latestYear})`, { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, color: "1A2332", bold: true });
-      const heatmapRows: any[][] = [];
-      const heatmapHeader = [
-        { text: "Chỉ số", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 8 } },
-        { text: target.company.ma_ck, options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 8 } },
-      ];
-      if (compEntries.length > 0) {
-        heatmapHeader.push({ text: "Trung vị", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 8 } });
-      }
-      heatmapRows.push(heatmapHeader);
-      for (const ind of indicators) {
-        const colorMap: Record<string, string> = { green: "E8F5E9", yellow: "FFF8E1", red: "FFEBEE", gray: "F5F5F5" };
-        const textColorMap: Record<string, string> = { green: "2E7D32", yellow: "F57F17", red: "C62828", gray: "9E9E9E" };
-        const row: any[] = [
-          { text: ind.name, options: { fontSize: 7, color: "1A2332" } },
-          { text: fmtVal(ind.id, ind.company_value), options: { fontSize: 7, color: textColorMap[ind.risk_level] || "9E9E9E", fill: { color: colorMap[ind.risk_level] || "F5F5F5" }, align: "center" } },
+      // --- For each year: Heatmap slide ---
+      for (const year of allYears) {
+        const indicators = target.indicators[year] || [];
+        const slide = pptx.addSlide();
+        addText(slide, `Bảng nhiệt - ${target.company.ma_ck} (${year})`, { x: 0.5, y: 0.2, w: 9, h: 0.4, fontSize: 16, bold: true });
+
+        const rows: any[][] = [
+          [
+            { text: "Chỉ số", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } },
+            { text: "Giá trị", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } },
+            { text: "RR1", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } },
+            { text: "RR2", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } },
+            { text: "Trung vị", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } },
+          ]
         ];
-        if (compEntries.length > 0) {
-          const med = computeMedian(result, ind.id, latestYear);
-          row.push({ text: fmtVal(ind.id, med), options: { fontSize: 7, color: "546E7A", align: "center" } });
-        }
-        heatmapRows.push(row);
-      }
-      const colW = compEntries.length > 0 ? [3.5, 1.5, 1.5] : [4.0, 2.0];
-      slide3.addTable(heatmapRows, { x: 0.5, y: 1.0, w: 9, colW, fontSize: 7, rowH: 0.22, border: { pt: 0.5, color: "E0E0E0" } });
-
-      // --- Slide 4: Comparison ---
-      if (compEntries.length > 0) {
-        const slide4 = pptx.addSlide();
-        slide4.addText(`So sánh các công ty - ${latestYear}`, { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, color: "1A2332", bold: true });
-        const allTickers = [target.company.ma_ck, ...compEntries.map(([, v]) => v.company.ma_ck)];
-        const compRows: any[][] = [];
-        const compHeader: any[] = [{ text: "Chỉ số", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } }];
-        for (const tk of allTickers) {
-          compHeader.push({ text: tk, options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } });
-        }
-        compRows.push(compHeader);
         for (const ind of indicators) {
-          const row: any[] = [{ text: ind.name, options: { fontSize: 6 } }];
-          // Target
-          row.push({ text: fmtVal(ind.id, ind.company_value), options: { fontSize: 6, align: "center" } });
-          // Comparisons
-          for (const [, compData] of compEntries) {
-            const compInd = compData.indicators[latestYear]?.find((i) => i.id === ind.id);
-            row.push({ text: fmtVal(ind.id, compInd?.company_value ?? null), options: { fontSize: 6, align: "center" } });
-          }
-          compRows.push(row);
+          const r1 = (ind as any).risk_level_1 || ind.risk_level;
+          const r2 = (ind as any).risk_level_2 || "gray";
+          const riskColor1 = r1 === "red" ? "FFEBEE" : "FFFFFF";
+          const riskColor2 = r2 === "red" ? "FFEBEE" : "FFFFFF";
+          const textColor1 = r1 === "red" ? "C62828" : "2E7D32";
+          const textColor2 = r2 === "red" ? "C62828" : "2E7D32";
+          rows.push([
+            { text: ind.name, options: { fontSize: 6 } },
+            { text: fmtVal(ind.id, ind.company_value), options: { fontSize: 6, align: "center" } },
+            { text: r1 === "red" ? "Rủi ro" : "An toàn", options: { fontSize: 6, color: textColor1, fill: { color: riskColor1 }, align: "center" } },
+            { text: r2 === "red" ? "Rủi ro" : "An toàn", options: { fontSize: 6, color: textColor2, fill: { color: riskColor2 }, align: "center" } },
+            { text: fmtVal(ind.id, (ind as any).industry_median), options: { fontSize: 6, align: "center" } },
+          ]);
         }
-        const compColW = [2.5, ...allTickers.map(() => (9 - 2.5) / allTickers.length)];
-        slide4.addTable(compRows, { x: 0.5, y: 1.0, w: 9, colW: compColW, fontSize: 6, rowH: 0.2, border: { pt: 0.5, color: "E0E0E0" } });
+        slide.addTable(rows, { x: 0.3, y: 0.8, w: 9.4, colW: [3.0, 1.5, 1.2, 1.2, 1.5], fontSize: 6, rowH: 0.2, border: { pt: 0.5, color: "E0E0E0" } });
       }
 
-      // --- Slide 5: Analysis ---
-      const slide5 = pptx.addSlide();
-      slide5.addText("Phân tích chỉ số rủi ro", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, color: "1A2332", bold: true });
-      const riskInds = indicators.filter((i) => (i.risk_level_1 ?? i.risk_level) === "red" || (i.risk_level_2 ?? i.risk_level) === "red" || i.risk_level === "yellow");
-      let yPos = 1.0;
-      for (const ind of riskInds.slice(0, 8)) {
-        const analysis = INDICATOR_ANALYSIS[ind.id];
-        const isRr1 = (ind.risk_level_1 ?? ind.risk_level) === "red";
-        const isRr2 = (ind.risk_level_2 ?? ind.risk_level) === "red";
-        const riskText = isRr1 && isRr2 ? "RR1+RR2" : isRr1 ? "RR1 (ngưỡng cố định)" : isRr2 ? "RR2 (ngoài phân vị)" : "CHÚ Ý";
-        const riskColor = isRr1 ? "E65100" : isRr2 ? "C62828" : "F57F17";
-        slide5.addText(`${ind.id} ${ind.name} [${riskText}]`, { x: 0.5, y: yPos, w: 9, h: 0.25, fontSize: 9, color: riskColor, bold: true });
-        const meaning = analysis ? analysis.risk_meaning : ind.risk_factor;
-        slide5.addText(meaning, { x: 0.5, y: yPos + 0.25, w: 9, h: 0.3, fontSize: 7, color: "546E7A" });
-        yPos += 0.6;
-        if (yPos > 6.5) break;
+      // --- For each year: Comparison slide ---
+      if (compEntries.length > 0) {
+        for (const year of allYears) {
+          const indicators = target.indicators[year] || [];
+          const slide = pptx.addSlide();
+          addText(slide, `So sánh - ${year}`, { x: 0.5, y: 0.2, w: 9, h: 0.4, fontSize: 16, bold: true });
+
+          const tickers = [target.company.ma_ck, ...compEntries.map(([, v]) => v.company.ma_ck)];
+          const header: any[] = [{ text: "Chỉ số", options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } }];
+          for (const tk of tickers) {
+            header.push({ text: tk, options: { bold: true, fill: { color: "1A2332" }, color: "FFFFFF", fontSize: 7 } });
+          }
+          const cRows: any[][] = [header];
+
+          for (const ind of indicators) {
+            const row: any[] = [{ text: ind.name, options: { fontSize: 6 } }];
+            row.push({ text: fmtVal(ind.id, ind.company_value), options: { fontSize: 6, align: "center" } });
+            for (const [, compData] of compEntries) {
+              const compInd = compData.indicators[year]?.find((i: any) => i.id === ind.id);
+              row.push({ text: fmtVal(ind.id, compInd?.company_value ?? null), options: { fontSize: 6, align: "center" } });
+            }
+            cRows.push(row);
+          }
+
+          const colW = [2.5, ...tickers.map(() => (9.5 - 2.5) / tickers.length)];
+          slide.addTable(cRows, { x: 0.3, y: 0.8, w: 9.4, colW, fontSize: 6, rowH: 0.2, border: { pt: 0.5, color: "E0E0E0" } });
+        }
+      }
+
+      // --- For each year: Analysis slide (only risky indicators) ---
+      for (const year of allYears) {
+        const indicators = target.indicators[year] || [];
+        const riskyInds = indicators.filter((i: any) => (i.risk_level_1 || i.risk_level) === "red" || (i.risk_level_2 || "gray") === "red");
+        if (riskyInds.length === 0) continue;
+
+        const slide = pptx.addSlide();
+        addText(slide, `Phân tích rủi ro - ${year}`, { x: 0.5, y: 0.2, w: 9, h: 0.4, fontSize: 16, bold: true });
+        addText(slide, `${riskyInds.length} chỉ số có rủi ro`, { x: 0.5, y: 0.6, w: 9, h: 0.3, fontSize: 10, color: "C62828" });
+
+        let yPos = 1.0;
+        for (const ind of riskyInds.slice(0, 10)) {
+          const r1 = (ind as any).risk_level_1 || ind.risk_level;
+          const r2 = (ind as any).risk_level_2 || "gray";
+          const labels: string[] = [];
+          if (r1 === "red") labels.push("RR1");
+          if (r2 === "red") labels.push("RR2");
+
+          addText(slide, `${ind.id} ${ind.name} [${labels.join("+")}]`, { x: 0.5, y: yPos, w: 9, h: 0.2, fontSize: 8, bold: true, color: "C62828" });
+          addText(slide, `Giá trị: ${fmtVal(ind.id, ind.company_value)} | Trung vị: ${fmtVal(ind.id, (ind as any).industry_median)} | ${ind.risk_factor || ""}`, { x: 0.5, y: yPos + 0.2, w: 9, h: 0.25, fontSize: 7, color: "546E7A" });
+          yPos += 0.5;
+          if (yPos > 6.5) break;
+        }
       }
 
       // Save
@@ -801,7 +822,7 @@ export default function Dashboard() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `TIRA_${target.company.ma_ck}_${latestYear}.pptx`;
+      a.download = `TIRA_${target.company.ma_ck}_${allYears[0]}.pptx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1329,6 +1350,7 @@ export default function Dashboard() {
 function HeatmapView({ result, percentileLow, percentileHigh }: { result: AnalysisResult; percentileLow: number; percentileHigh: number }) {
   const { target, comparisons } = result;
   const latestYear = target.years[0];
+  const [medianChartYear, setMedianChartYear] = useState(target.years[0]);
   const indicators = target.indicators[latestYear] || [];
   const compEntries = Object.entries(comparisons);
   const hasComparisons = compEntries.length > 0;
@@ -1343,18 +1365,19 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
     return Array.from(map.entries());
   }, [indicators]);
 
-  // Compute medians: prefer industry_median from API, fallback to computed median from comparisons
+  // Compute medians for the selected median chart year
+  const medianChartIndicators = target.indicators[medianChartYear] || [];
   const medians = useMemo(() => {
     const m: Record<string, number | null> = {};
-    for (const ind of indicators) {
-      m[ind.id] = ind.industry_median !== undefined ? ind.industry_median : computeMedian(result, ind.id, latestYear);
+    for (const ind of medianChartIndicators) {
+      m[ind.id] = ind.industry_median !== undefined ? ind.industry_median : computeMedian(result, ind.id, medianChartYear);
     }
     return m;
-  }, [indicators, result, latestYear]);
+  }, [medianChartIndicators, result, medianChartYear]);
 
-  // Chart data: % difference from median for each indicator
+  // Chart data: % difference from median for each indicator (using medianChartYear)
   const chartData = useMemo(() => {
-    return indicators.map((ind) => {
+    return medianChartIndicators.map((ind) => {
       const med = medians[ind.id] ?? ind.industry_median;
       let pctDiff: number | null = null;
       if (ind.company_value !== null && med !== null && med !== 0) {
@@ -1368,7 +1391,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
         risk: ind.risk_level,
       };
     }).filter(d => d.pctDiff !== null);
-  }, [indicators, medians]);
+  }, [medianChartIndicators, medians]);
 
   return (
     <div className="space-y-6">
@@ -1477,12 +1500,30 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
       {chartData.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">
-              % Lệch so với Trung vị ngành – {target.company.ma_ck} ({latestYear})
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Dương (+) = cao hơn trung vị ngành, âm (−) = thấp hơn trung vị ngành
-            </p>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <CardTitle className="text-base font-semibold">
+                  % Lệch so với Trung vị ngành – {target.company.ma_ck} ({medianChartYear})
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Dương (+) = cao hơn trung vị ngành, âm (−) = thấp hơn trung vị ngành
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Năm:</span>
+                {target.years.map((year) => (
+                  <Button
+                    key={year}
+                    variant={medianChartYear === year ? "default" : "outline"}
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setMedianChartYear(year)}
+                  >
+                    {year}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[480px]">
@@ -1567,6 +1608,7 @@ function ChartsView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const latestYear = target.years[0];
   const indicators = target.indicators[latestYear] || [];
+  const [radarYears, setRadarYears] = useState<string[]>(target.years);
 
   const riskDistribution = useMemo(() => {
     return target.years.map((year) => {
@@ -1582,19 +1624,34 @@ function ChartsView({ result }: { result: AnalysisResult }) {
   }, [target]);
 
   const radarData = useMemo(() => {
-    const groups = new Map<string, number[]>();
-    for (const ind of indicators) {
-      const list = groups.get(ind.group) || [];
-      if (ind.risk_level === "red") list.push(3);
-      else if (ind.risk_level === "yellow") list.push(1);
-      else if (ind.risk_level === "green") list.push(0);
-      groups.set(ind.group, list);
-    }
-    return Array.from(groups.entries()).map(([group, scores]) => ({
+    const groupScores = new Map<string, number[]>();
+    const sortedYears = [...radarYears].sort((a, b) => Number(b) - Number(a));
+
+    sortedYears.forEach((year, idx) => {
+      const yearInds = target.indicators[year] || [];
+      const groups = new Map<string, number[]>();
+      for (const ind of yearInds) {
+        const list = groups.get(ind.group) || [];
+        if (ind.risk_level === "red" || (ind as any).risk_level_1 === "red") list.push(3);
+        else if (ind.risk_level === "yellow") list.push(1);
+        else if (ind.risk_level === "green") list.push(0);
+        groups.set(ind.group, list);
+      }
+      const yw = sortedYears.length - idx;
+      Array.from(groups.entries()).forEach(([group, scores]) => {
+        const avg = scores.length > 0 ? scores.reduce((a: number, b: number) => a + b, 0) / (scores.length * 3) * 100 : 0;
+        const existing = groupScores.get(group) || [];
+        existing.push(avg * yw);
+        groupScores.set(group, existing);
+      });
+    });
+
+    const totalYearWeight = sortedYears.reduce((acc, _, idx) => acc + (sortedYears.length - idx), 0);
+    return Array.from(groupScores.entries()).map(([group, weightedScores]) => ({
       group: GROUP_SHORT[group] || group,
-      score: scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / (scores.length * 3)) * 100 : 0,
+      score: totalYearWeight > 0 ? weightedScores.reduce((a, b) => a + b, 0) / totalYearWeight : 0,
     }));
-  }, [indicators]);
+  }, [radarYears, target]);
 
   const trendData = useMemo(() => {
     const keyIds = ["0.1", "1.1", "1.5", "2.1", "2.5"];
@@ -1652,9 +1709,19 @@ function ChartsView({ result }: { result: AnalysisResult }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">
-              Hồ sơ rủi ro - {target.company.ma_ck}
-            </CardTitle>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-base font-semibold">
+                Hồ sơ rủi ro - {target.company.ma_ck}
+              </CardTitle>
+              <YearMultiSelect
+                allYears={target.years}
+                selectedYears={radarYears}
+                onChange={setRadarYears}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Điểm bình quân có trọng số theo năm ({radarYears.join(", ")})
+            </p>
           </CardHeader>
           <CardContent>
             <div className="h-64">
@@ -1869,56 +1936,58 @@ function ComparisonView({ result }: { result: AnalysisResult }) {
         );
       })}
 
-      {/* Comparison chart (key indicators for latest selected year) */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">
-            Biểu đồ so sánh - Chỉ số chính ({sortedYears[0]})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={(target.indicators[sortedYears[0]] || [])
-                  .filter((ind) => ["0.1", "1.1", "1.5", "2.5", "3.4"].includes(ind.id))
-                  .map((ind) => {
-                    const row: Record<string, any> = {
-                      name: ind.name,
-                      [target.company.ma_ck]: ind.company_value,
-                    };
-                    for (const [, compData] of compEntries) {
-                      const compInd = compData.indicators[sortedYears[0]]?.find((i) => i.id === ind.id);
-                      row[compData.company.ma_ck] = compInd?.company_value ?? null;
-                    }
-                    return row;
-                  })}
-                barCategoryGap="15%"
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" />
-                <XAxis dataKey="name" fontSize={10} angle={-15} textAnchor="end" height={60} />
-                <YAxis fontSize={12} />
-                <RechartsTooltip
-                  contentStyle={{
-                    borderRadius: "8px",
-                    border: "1px solid hsl(214, 14%, 89%)",
-                    fontSize: "12px",
-                  }}
-                />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: "12px" }} />
-                {allTickers.map((tk, i) => (
-                  <Bar
-                    key={tk}
-                    dataKey={tk}
-                    fill={colors[i % colors.length]}
-                    radius={[2, 2, 0, 0]}
+      {/* Comparison charts (key indicators for each selected year) */}
+      {sortedYears.map((year) => (
+        <Card key={`chart-${year}`}>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">
+              Biểu đồ so sánh - Chỉ số chính ({year})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={(target.indicators[year] || [])
+                    .filter((ind) => ["0.1", "1.1", "1.5", "2.5", "3.4"].includes(ind.id))
+                    .map((ind) => {
+                      const row: Record<string, any> = {
+                        name: ind.name,
+                        [target.company.ma_ck]: ind.company_value,
+                      };
+                      for (const [, compData] of compEntries) {
+                        const compInd = compData.indicators[year]?.find((i) => i.id === ind.id);
+                        row[compData.company.ma_ck] = compInd?.company_value ?? null;
+                      }
+                      return row;
+                    })}
+                  barCategoryGap="15%"
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" />
+                  <XAxis dataKey="name" fontSize={10} angle={-15} textAnchor="end" height={60} />
+                  <YAxis fontSize={12} />
+                  <RechartsTooltip
+                    contentStyle={{
+                      borderRadius: "8px",
+                      border: "1px solid hsl(214, 14%, 89%)",
+                      fontSize: "12px",
+                    }}
                   />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+                  <Legend iconSize={10} wrapperStyle={{ fontSize: "12px" }} />
+                  {allTickers.map((tk, i) => (
+                    <Bar
+                      key={tk}
+                      dataKey={tk}
+                      fill={colors[i % colors.length]}
+                      radius={[2, 2, 0, 0]}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -2704,7 +2773,7 @@ function CompositeScoreExplanation({
   const allYears = target.years;
   const [selectedYear, setSelectedYear] = useState<string>(allYears[0] || "");
 
-  const indicators = target.indicators[selectedYear] || [];
+  const indicators = selectedYear === "avg" ? [] : (target.indicators[selectedYear] || []);
 
   const rows = indicators.map((ind) => {
     const w = weights[ind.id] ?? 5;
@@ -2782,6 +2851,14 @@ function CompositeScoreExplanation({
                   </button>
                 );
               })}
+              <Button
+                variant={selectedYear === "avg" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedYear("avg")}
+                className="h-auto py-2 px-3 text-xs"
+              >
+                BQ năm
+              </Button>
             </div>
 
             {/* Weighted average */}
@@ -2802,12 +2879,18 @@ function CompositeScoreExplanation({
           {/* Year selector for detail table */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-semibold">Chi tiết chỉ số năm {selectedYear}:</p>
-              <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <p className="text-sm font-semibold">
+                {selectedYear === "avg" ? "Bình quân năm (BQ)" : `Chi tiết chỉ số năm ${selectedYear}`}:
+              </p>
+              <Select
+                value={selectedYear}
+                onValueChange={setSelectedYear}
+              >
                 <SelectTrigger className="w-28 h-7 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="avg">BQ năm</SelectItem>
                   {allYears.map((y) => (
                     <SelectItem key={y} value={y}>{y}</SelectItem>
                   ))}
@@ -2815,79 +2898,129 @@ function CompositeScoreExplanation({
               </Select>
             </div>
 
-            {/* Score for selected year */}
-            <p className="text-xs text-muted-foreground mb-2">
-              Điểm năm {selectedYear}: <strong style={{ color: scoreColor(compositeScore) }}>{compositeScore}/100</strong>
-            </p>
-
-            {/* Detailed table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                  <tr style={{ background: "hsl(214, 10%, 95%)" }}>
-                    <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
-                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
-                    <th className="text-center px-3 py-2 font-semibold border-b border-border">RR1 Mức độ (0-5)</th>
-                    <th className="text-center px-3 py-2 font-semibold border-b border-border">RR2 Mức độ (0-5)</th>
-                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Tổng (0-10)</th>
-                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Đóng góp có trọng số</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(({ ind, w, r1, r2, sev1, sev2, totalSev, weightedContrib, maxContrib }) => (
-                    <tr
-                      key={ind.id}
-                      className="border-b border-border/50 hover:bg-accent/30 transition-colors"
-                      style={{
-                        background: totalSev >= 8 ? "hsl(0, 72%, 98%)" : totalSev > 0 ? "hsl(25, 100%, 98%)" : undefined,
-                      }}
-                    >
-                      <td className="px-3 py-2">
-                        <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
-                        <span>{ind.name}</span>
-                      </td>
-                      <td className="text-center px-3 py-2">
-                        <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>
-                          {w} – {WEIGHT_LABELS_SCORING[w]}
-                        </span>
-                      </td>
-                      <td className="text-center px-3 py-2">
-                        <span style={{ color: sev1 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                          {sev1} {r1 === "red" ? "⚠️" : r1 === "green" ? "✅" : ""}
-                        </span>
-                      </td>
-                      <td className="text-center px-3 py-2">
-                        <span style={{ color: sev2 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                          {sev2} {r2 === "red" ? "⚠️" : r2 === "green" ? "✅" : ""}
-                        </span>
-                      </td>
-                      <td className="text-center px-3 py-2 font-semibold">
-                        <span style={{ color: totalSev >= 8 ? "hsl(0, 72%, 45%)" : totalSev > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                          {totalSev}
-                        </span>
-                      </td>
-                      <td className="text-center px-3 py-2">
-                        <span className="font-mono">{weightedContrib} / {maxContrib}</span>
+            {selectedYear === "avg" ? (
+              /* Avg view: per-year scores and weighted average summary */
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr style={{ background: "hsl(214, 10%, 95%)" }}>
+                      <th className="text-left px-3 py-2 font-semibold border-b border-border">Năm</th>
+                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số tiếp cận</th>
+                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Điểm rủi ro</th>
+                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Điểm × Trọng số</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearScores.map(({ year, score, recencyWeight }) => (
+                      <tr
+                        key={year}
+                        className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+                      >
+                        <td className="px-3 py-2 font-mono font-semibold">{year}</td>
+                        <td className="text-center px-3 py-2">{recencyWeight}</td>
+                        <td className="text-center px-3 py-2 font-bold" style={{ color: scoreColor(score) }}>
+                          {score}/100
+                        </td>
+                        <td className="text-center px-3 py-2 font-mono">
+                          {score * recencyWeight}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "hsl(214, 10%, 93%)" }}>
+                      <td className="px-3 py-2 font-bold" colSpan={2}>Tổng trọng số</td>
+                      <td className="text-center px-3 py-2 font-bold" colSpan={2}>
+                        {yearScores.reduce((s, ys) => s + ys.recencyWeight, 0)}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background: "hsl(214, 10%, 93%)" }}>
-                    <td className="px-3 py-2 font-bold" colSpan={5}>Tổng cộng</td>
-                    <td className="text-center px-3 py-2 font-bold">
-                      {totalWeightedRisk} / {totalWeightedMax}
-                    </td>
-                  </tr>
-                  <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
-                    <td className="px-3 py-2 font-bold" colSpan={5}>Điểm rủi ro năm {selectedYear}</td>
-                    <td className="text-center px-3 py-2 font-bold text-lg">
-                      {compositeScore} / 100
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+                    <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
+                      <td className="px-3 py-2 font-bold" colSpan={2}>Điểm BQ năm (bình quân tiếp cận)</td>
+                      <td className="text-center px-3 py-2 font-bold text-lg" colSpan={2}>
+                        {avgScore} / 100
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              /* Per-year detail view */
+              <>
+                {/* Score for selected year */}
+                <p className="text-xs text-muted-foreground mb-2">
+                  Điểm năm {selectedYear}: <strong style={{ color: scoreColor(compositeScore) }}>{compositeScore}/100</strong>
+                </p>
+
+                {/* Detailed table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: "hsl(214, 10%, 95%)" }}>
+                        <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
+                        <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
+                        <th className="text-center px-3 py-2 font-semibold border-b border-border">RR1 Mức độ (0-5)</th>
+                        <th className="text-center px-3 py-2 font-semibold border-b border-border">RR2 Mức độ (0-5)</th>
+                        <th className="text-center px-3 py-2 font-semibold border-b border-border">Tổng (0-10)</th>
+                        <th className="text-center px-3 py-2 font-semibold border-b border-border">Đóng góp có trọng số</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(({ ind, w, r1, r2, sev1, sev2, totalSev, weightedContrib, maxContrib }) => (
+                        <tr
+                          key={ind.id}
+                          className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+                          style={{
+                            background: totalSev >= 8 ? "hsl(0, 72%, 98%)" : totalSev > 0 ? "hsl(25, 100%, 98%)" : undefined,
+                          }}
+                        >
+                          <td className="px-3 py-2">
+                            <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
+                            <span>{ind.name}</span>
+                          </td>
+                          <td className="text-center px-3 py-2">
+                            <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>
+                              {w} – {WEIGHT_LABELS_SCORING[w]}
+                            </span>
+                          </td>
+                          <td className="text-center px-3 py-2">
+                            <span style={{ color: sev1 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                              {sev1} {r1 === "red" ? "⚠️" : r1 === "green" ? "✅" : ""}
+                            </span>
+                          </td>
+                          <td className="text-center px-3 py-2">
+                            <span style={{ color: sev2 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                              {sev2} {r2 === "red" ? "⚠️" : r2 === "green" ? "✅" : ""}
+                            </span>
+                          </td>
+                          <td className="text-center px-3 py-2 font-semibold">
+                            <span style={{ color: totalSev >= 8 ? "hsl(0, 72%, 45%)" : totalSev > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                              {totalSev}
+                            </span>
+                          </td>
+                          <td className="text-center px-3 py-2">
+                            <span className="font-mono">{weightedContrib} / {maxContrib}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: "hsl(214, 10%, 93%)" }}>
+                        <td className="px-3 py-2 font-bold" colSpan={5}>Tổng cộng</td>
+                        <td className="text-center px-3 py-2 font-bold">
+                          {totalWeightedRisk} / {totalWeightedMax}
+                        </td>
+                      </tr>
+                      <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
+                        <td className="px-3 py-2 font-bold" colSpan={5}>Điểm rủi ro năm {selectedYear}</td>
+                        <td className="text-center px-3 py-2 font-bold text-lg">
+                          {compositeScore} / 100
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -2895,6 +3028,10 @@ function CompositeScoreExplanation({
   );
 }
 
+
+function calcRecencyWeight(years: string[], yearIdx: number): number {
+  return years.length - yearIdx; // first (newest) = n, last (oldest) = 1
+}
 
 function RiskDiagramView({
   result,
@@ -2908,6 +3045,7 @@ function RiskDiagramView({
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
   const [filterMode, setFilterMode] = useState<"both" | "rr1only" | "rr2only" | "all">("all");
+  const [diagramYears, setDiagramYears] = useState<string[]>(allYears);
 
   const DIAGRAM_GROUPS = [
     "CRITICAL RED LINES",
@@ -2934,20 +3072,21 @@ function RiskDiagramView({
 
   // Build diagram data: Probability x Impact
   const diagramData = useMemo(() => {
-    const n = allYears.length;
+    const sortedDiagramYears = [...diagramYears].sort((a, b) => Number(b) - Number(a));
+    const n = sortedDiagramYears.length;
     return baseIndicators
       .filter((ind) => !hiddenIds.has(ind.id) && !hiddenGroups.has(ind.group))
       .map((ind) => {
         const w = weights[ind.id] ?? 5;
 
-        // Calculate probability: recency-weighted frequency of risk across years
+        // Calculate probability: recency-weighted frequency of risk across selected years
         let probNumerator = 0;
         let probDenominator = 0;
         let hasRR1 = false;
         let hasRR2 = false;
 
-        allYears.forEach((year, idx) => {
-          const recencyW = n - idx; // newest year = n, oldest = 1
+        sortedDiagramYears.forEach((year, idx) => {
+          const recencyW = calcRecencyWeight(sortedDiagramYears, idx);
           probDenominator += recencyW;
           const yearInd = (target.indicators[year] || []).find((i) => i.id === ind.id);
           if (!yearInd) return;
@@ -2961,13 +3100,29 @@ function RiskDiagramView({
 
         const probability = probDenominator > 0 ? probNumerator / probDenominator : 0;
 
-        // Impact: (sev1 + sev2) * weight / (10 * 10)
-        const latestInd = (target.indicators[allYears[0]] || []).find((i) => i.id === ind.id) || ind;
+        // Impact: weighted average severity across selected years * weight
+        let totalSevWeighted = 0;
+        let totalYearWeight = 0;
+        sortedDiagramYears.forEach((year, idx) => {
+          const yearInds = target.indicators[year] || [];
+          const yearInd = yearInds.find((i) => i.id === ind.id);
+          if (yearInd) {
+            const sev1 = calcRiskSeverity(yearInd.risk_level_1 || yearInd.risk_level || "gray", yearInd.company_value, yearInd.industry_median, yearInd.industry_p_low, yearInd.industry_p_high);
+            const sev2 = calcRiskSeverity((yearInd as any).risk_level_2 || "gray", yearInd.company_value, yearInd.industry_median, yearInd.industry_p_low, yearInd.industry_p_high);
+            const yw = calcRecencyWeight(sortedDiagramYears, idx);
+            totalSevWeighted += (sev1 + sev2) * yw;
+            totalYearWeight += yw;
+          }
+        });
+        const avgSeverity = totalYearWeight > 0 ? totalSevWeighted / totalYearWeight : 0;
+        const impact = avgSeverity * w / 100;
+
+        // For tooltip: use latest selected year indicator
+        const latestInd = (target.indicators[sortedDiagramYears[0]] || []).find((i) => i.id === ind.id) || ind;
         const r1Latest = (latestInd as any).risk_level_1 || latestInd.risk_level || "gray";
         const r2Latest = (latestInd as any).risk_level_2 || "gray";
-        const sev1 = calcRiskSeverity(r1Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
-        const sev2 = calcRiskSeverity(r2Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
-        const impact = (sev1 + sev2) * w / (10 * 10);
+        const sev1Latest = calcRiskSeverity(r1Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
+        const sev2Latest = calcRiskSeverity(r2Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
 
         // Z: bubble size = weight importance (1-10)
         const z = w * 50;
@@ -2991,8 +3146,8 @@ function RiskDiagramView({
           color,
           hasRR1,
           hasRR2,
-          sev1,
-          sev2,
+          sev1: sev1Latest,
+          sev2: sev2Latest,
           probability,
           impact,
         };
@@ -3005,7 +3160,7 @@ function RiskDiagramView({
         if (filterMode === "both") return d.hasRR1 && d.hasRR2;
         return d.probability > 0;
       });
-  }, [baseIndicators, allYears, target, weights, hiddenIds, hiddenGroups, filterMode]);
+  }, [baseIndicators, diagramYears, target, weights, hiddenIds, hiddenGroups, filterMode]);
 
   const allIndicatorIds = useMemo(() => {
     return baseIndicators.map((i) => ({ id: i.id, name: i.name, group: i.group }));
@@ -3074,6 +3229,18 @@ function RiskDiagramView({
           </p>
         </CardHeader>
         <CardContent>
+          {/* Year multi-select */}
+          <div className="flex items-center gap-3 mb-4">
+            <YearMultiSelect
+              allYears={allYears}
+              selectedYears={diagramYears}
+              onChange={setDiagramYears}
+            />
+            <span className="text-xs text-muted-foreground">
+              {diagramYears.length} năm đã chọn (xác suất & tác động bình quân có trọng số)
+            </span>
+          </div>
+
           {/* Filter controls */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <div className="flex items-center gap-2">
