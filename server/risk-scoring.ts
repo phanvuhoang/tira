@@ -156,8 +156,12 @@ export function calculateYearScore(
 
     const total_sev = rr1_sev + rr2_sev; // 0-10
     const weighted = total_sev * iw;
-    totalWeighted += weighted;
-    maxWeighted += 10 * iw; // max severity 10 * weight
+
+    // Only count indicators that have risk (severity > 0)
+    if (total_sev > 0) {
+      totalWeighted += weighted;
+      maxWeighted += 10 * iw; // max severity 10 * weight
+    }
 
     breakdown.push({ id: ind.id, weight: iw, rr1_severity: rr1_sev, rr2_severity: rr2_sev, total_severity: total_sev, weighted_score: weighted });
   }

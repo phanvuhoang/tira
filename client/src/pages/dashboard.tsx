@@ -2375,29 +2375,48 @@ function intensityColor(score: number): string {
 }
 
 // Enhanced deviation calculation for heatmap
-function calculateDeviation(indicator: TiraIndicator): { rr1Dev: number; rr2Dev: number } {
-  // RR1: binary for now (0 or 1 based on threshold breach)
-  const rr1Dev = indicator.risk_level_1 === "red" ? 1 : 0;
-
-  // RR2: normalized distance from median, scaled by IQR
+// rr1Dev: how many standard deviations beyond the threshold (0 = safe, >0 = risky)
+// rr2Dev: how many IQR units away from median (0 = within range, >0 = outside)
+function calculateDeviation(indicator: TiraIndicator): { rr1Dev: number; rr2Dev: number; rr1Explain: string; rr2Explain: string } {
+  let rr1Dev = 0;
+  let rr1Explain = "An toàn: trong ngưỡng cho phép";
   let rr2Dev = 0;
-  if (
-    indicator.company_value !== null &&
-    indicator.industry_median !== null
-  ) {
+  let rr2Explain = "An toàn: trong khoảng phân vị ngành";
+
+  // RR1: deviation from threshold, normalized 0-1
+  if (indicator.risk_level_1 === "red" && indicator.company_value !== null) {
+    // Use severity as proxy for deviation magnitude
+    const sev = calcRiskSeverity("red", indicator.company_value, indicator.industry_median, indicator.industry_p_low, indicator.industry_p_high);
+    rr1Dev = Math.min(sev / 5, 1); // normalize 0-1
+    const sevLabels = ["", "nhẹ", "vừa", "đáng kể", "cao", "rất cao"];
+    rr1Explain = `Rủi ro: vượt ngưỡng CQT, mức độ ${sevLabels[sev] || ""} (severity ${sev}/5)`;
+  }
+
+  // RR2: distance from median/IQR in standard deviation units
+  if (indicator.company_value !== null && indicator.industry_median !== null) {
     const median = indicator.industry_median;
     const pLow = indicator.industry_p_low;
     const pHigh = indicator.industry_p_high;
-    if (pLow !== null && pHigh !== null && pHigh - pLow > 0) {
+    if (pLow !== null && pHigh !== null && (pHigh - pLow) > 0) {
       const iqr = pHigh - pLow;
+      // IQR ≈ 1.35 standard deviations for normal distribution
+      const approxStdDev = iqr / 1.35;
       const distFromMedian = Math.abs(indicator.company_value - median);
-      rr2Dev = Math.min(distFromMedian / iqr, 2) / 2; // Normalized 0-1
+      const stdDevs = approxStdDev > 0 ? distFromMedian / approxStdDev : 0;
+      rr2Dev = Math.min(stdDevs / 3, 1); // 3 std devs = max bar (100%)
+      if (indicator.risk_level_2 === "red") {
+        const direction = indicator.company_value < median ? "thấp hơn" : "cao hơn";
+        rr2Explain = `Rủi ro: ${direction} trung vị ${stdDevs.toFixed(1)} độ lệch chuẩn (${((distFromMedian / Math.abs(median || 1)) * 100).toFixed(0)}% so với trung vị)`;
+      } else {
+        rr2Explain = `An toàn: lệch ${stdDevs.toFixed(1)} std dev so với trung vị, trong phân vị ngành`;
+      }
     } else if (indicator.risk_level_2 === "red") {
-      rr2Dev = 0.8; // fallback if IQR not available
+      rr2Dev = 0.6;
+      rr2Explain = "Rủi ro: ngoài khoảng phân vị ngành (IQR không xác định)";
     }
   }
 
-  return { rr1Dev, rr2Dev };
+  return { rr1Dev, rr2Dev, rr1Explain, rr2Explain };
 }
 
 function RiskHeatmapView({ result }: { result: AnalysisResult }) {
@@ -2529,7 +2548,7 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
                               </td>
                             );
                           }
-                          const { rr1Dev, rr2Dev } = calculateDeviation(ind);
+                          const { rr1Dev, rr2Dev, rr1Explain, rr2Explain } = calculateDeviation(ind);
                           const bothSafe = rr1Dev === 0 && rr2Dev < 0.2;
                           const cellBg = bothSafe
                             ? "hsl(142, 55%, 94%)"
@@ -2596,31 +2615,11 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
                                   <p>Năm: {year}</p>
                                   <p>Giá trị: {fmtVal(indId, ind.company_value)}</p>
                                   <p>Trung vị ngành: {fmtVal(indId, ind.industry_median)}</p>
-                                  <p>
-                                    RR1 (Ngưỡng):{" "}
-                                    <span
-                                      style={{
-                                        color:
-                                          ind.risk_level_1 === "red"
-                                            ? "hsl(25,90%,45%)"
-                                            : "hsl(142,55%,40%)",
-                                      }}
-                                    >
-                                      {ind.risk_level_1 === "red" ? "Rủi ro" : "An toàn"}
-                                    </span>
+                                  <p style={{ color: ind.risk_level_1 === "red" ? "hsl(25,90%,45%)" : "hsl(142,55%,40%)" }}>
+                                    RR1: {rr1Explain}
                                   </p>
-                                  <p>
-                                    RR2 (Lệch IQR: {(rr2Dev * 100).toFixed(0)}%):{" "}
-                                    <span
-                                      style={{
-                                        color:
-                                          ind.risk_level_2 === "red"
-                                            ? "hsl(0,72%,48%)"
-                                            : "hsl(142,55%,40%)",
-                                      }}
-                                    >
-                                      {ind.risk_level_2 === "red" ? "Rủi ro" : "An toàn"}
-                                    </span>
+                                  <p style={{ color: ind.risk_level_2 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
+                                    RR2: {rr2Explain}
                                   </p>
                                 </TooltipContent>
                               </Tooltip>
@@ -2634,6 +2633,38 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
               </tbody>
             </table>
           </div>
+
+          {/* Expandable Giải thích */}
+          <details className="mt-4 border-t border-border/50 pt-3">
+            <summary className="text-xs font-semibold text-primary cursor-pointer hover:underline">
+              Giải thích biểu đồ nhiệt
+            </summary>
+            <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">Ý nghĩa thanh màu:</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>
+                  <span style={{color: "hsl(25, 90%, 50%)"}}>Thanh cam (trái) = RR1</span>: Mức độ lệch so với ngưỡng của cơ quan thuế.
+                  Độ dài thanh tỉ lệ với mức độ rủi ro (severity 0-5). Thanh đầy = severity 5 (lệch rất xa ngưỡng).
+                  Thanh mờ/xám = an toàn (trong ngưỡng).
+                </li>
+                <li>
+                  <span style={{color: "hsl(0, 72%, 48%)"}}>Thanh đỏ (phải) = RR2</span>: Mức độ lệch so với trung vị ngành, tính bằng độ lệch chuẩn (σ).
+                  Độ dài thanh = khoảng cách từ giá trị công ty đến trung vị ngành / độ lệch chuẩn ước tính.
+                  Công thức: σ ≈ IQR / 1.35. Thanh đầy = lệch 3σ (rất xa trung vị).
+                  Thanh mờ/xám = trong khoảng phân vị ngành.
+                </li>
+                <li>
+                  <span style={{color: "hsl(142, 55%, 40%)"}}>Nền xanh</span>: Chỉ số an toàn cả hai chiều (không có RR1 và RR2).
+                </li>
+              </ul>
+              <p className="font-medium text-foreground mt-2">Cách đọc:</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>Hover vào từng ô để xem giải thích chi tiết về mức độ rủi ro, hướng lệch (cao/thấp hơn trung vị), và số độ lệch chuẩn.</li>
+                <li>Ô có cả hai thanh đậm = rủi ro kép (vượt ngưỡng CQT và lệch xa ngành).</li>
+                <li>Ô chỉ có một thanh đậm = rủi ro đơn chiều.</li>
+              </ul>
+            </div>
+          </details>
         </CardContent>
       </Card>
     </div>
@@ -3269,6 +3300,8 @@ function calcCompositeScore(
     const r2 = (ind as any).risk_level_2 || "gray";
     const sev1 = calcRiskSeverity(r1, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
     const sev2 = calcRiskSeverity(r2, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
+    // Only count indicators that have risk (sev > 0)
+    if (sev1 === 0 && sev2 === 0) continue;
     const totalSev = sev1 + sev2; // 0-10
     totalWeighted += totalSev * w;
     maxWeighted += 10 * w;
