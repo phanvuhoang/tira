@@ -47,9 +47,16 @@ function Sidebar({ user, onLogout }: SidebarProps) {
 
   const isAdmin = user.role === "admin";
 
+  // Preserve last dashboard URL with params when navigating back
+  const dashboardHref = (() => {
+    const currentHash = window.location.hash;
+    if (currentHash.startsWith("#/dashboard?")) return currentHash.slice(1);
+    return "/dashboard";
+  })();
+
   const links = [
     { href: "/", label: "Phân tích", icon: BarChart3, adminOnly: false },
-    { href: "/dashboard", label: "Dashboard", icon: Shield, adminOnly: false },
+    { href: dashboardHref, label: "Dashboard", icon: Shield, adminOnly: false },
     { href: "/custom", label: "Công ty mới", icon: PlusCircle, adminOnly: false },
     { href: "/upload", label: "Tải dữ liệu", icon: Upload, adminOnly: false },
     { href: "/history", label: "Lịch sử", icon: FileText, adminOnly: false },

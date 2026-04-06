@@ -185,13 +185,14 @@ export function calculateMultiYearScore(
   const sorted = [...yearScores].sort((a, b) => Number(b.year) - Number(a.year));
 
   // Assign recency weights: nearest year gets highest weight
-  // Weight = totalYears - index (so nearest=N, furthest=1)
+  // Gap 0.5: newest gets n, second gets n-0.5, third gets n-1.0, etc.
+  // e.g. for 5 years: 5, 4.5, 4, 3.5, 3
   const n = sorted.length;
   let totalWeight = 0;
   let totalWeightedScore = 0;
 
   const yearDetails = sorted.map((ys, idx) => {
-    const recencyWeight = n - idx; // nearest=n, furthest=1
+    const recencyWeight = n - idx * 0.5; // gap 0.5 between years
     totalWeight += recencyWeight;
     totalWeightedScore += ys.score * recencyWeight;
     return { year: ys.year, score: ys.score, recencyWeight, weightedScore: ys.score * recencyWeight };

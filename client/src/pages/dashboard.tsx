@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { getToken } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { getHashParams } from "@/lib/hashLocation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,7 +116,7 @@ function exportAiReportToWord(content: string, ticker: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `TIRA_Report_${ticker}.doc`;
+  a.download = `TIRA_Report_${ticker}_${new Date().toISOString().slice(0, 10)}.doc`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -607,6 +608,17 @@ export default function Dashboard() {
     return getHashParams();
   }, []);
 
+  const userRole = useMemo(() => {
+    const token = getToken();
+    if (!token) return "viewer";
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.role || "viewer";
+    } catch { return "viewer"; }
+  }, []);
+
+  const canEdit = userRole === "admin" || userRole === "editor";
+
   const isCustom = params.get("custom") === "true";
   const ticker = params.get("ticker") || "";
   const reportType = params.get("report_type") || "Parent";
@@ -635,6 +647,18 @@ export default function Dashboard() {
 
   const result = isCustom ? customResult : fetchedResult;
 
+  // Auto-save analysis when result loads (for editors/admins)
+  const API_BASE = ("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__");
+  useEffect(() => {
+    if (result && canEdit && ticker) {
+      fetch(`${API_BASE}/api/analyses/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+        body: JSON.stringify({ ticker, report_type: reportType, years, comparisons, percentile_low: percentileLow, percentile_high: percentileHigh, name: `${ticker} - ${new Date().toLocaleDateString("vi-VN")}` }),
+      }).catch(() => {});
+    }
+  }, [result, canEdit, ticker]);
+
   const summaryStats = useMemo(() => {
     if (!result) return null;
     const allYears = result.target.years;
@@ -650,7 +674,7 @@ export default function Dashboard() {
     const n = yearScores.length;
     let totalW = 0, totalWS = 0;
     yearScores.forEach((ys, idx) => {
-      const recencyWeight = n - idx; // first year (newest) gets n, last gets 1
+      const recencyWeight = n - idx * 0.5; // first year (newest) gets n, gap 0.5
       totalW += recencyWeight;
       totalWS += ys.score * recencyWeight;
     });
@@ -846,6 +870,7 @@ export default function Dashboard() {
           ticker,
           report_type: reportType,
           years,
+          selected_years: years,
           comparisons,
           percentile_low: percentileLow,
           percentile_high: percentileHigh,
@@ -869,7 +894,16 @@ export default function Dashboard() {
         const parts: string[] = [];
         if (reports.financial) parts.push("# Báo cáo Phân tích Tài chính\n\n" + reports.financial);
         if (reports.tax) parts.push("# Báo cáo Phân tích Rủi ro Thuế\n\n" + reports.tax);
-        setAiReportContent(parts.join("\n\n---\n\n") || data.content || JSON.stringify(data));
+        const reportContent = parts.join("\n\n---\n\n") || data.content || JSON.stringify(data);
+        setAiReportContent(reportContent);
+        // Auto-save AI report for editors/admins
+        if (canEdit && reportContent) {
+          fetch(`${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/reports/save`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+            body: JSON.stringify({ name: `${ticker} - AI Report - ${new Date().toLocaleDateString("vi-VN")}`, ticker, report_type: "ai", content: reportContent }),
+          }).catch(() => {});
+        }
       }
     } catch (err: any) {
       console.error("AI Report error:", err);
@@ -877,7 +911,7 @@ export default function Dashboard() {
     } finally {
       setAiGenerating(false);
     }
-  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiModel]);
+  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiModel, canEdit]);
 
   const handleSaveAiReport = useCallback(async () => {
     if (!result || !aiReportContent) return;
@@ -1001,27 +1035,18 @@ export default function Dashboard() {
             <Download className="w-4 h-4" />
             {isExporting ? "Đang xuất..." : "Tải báo cáo (PPTX)"}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => { setAiReportOpen(true); setAiReportContent(null); setAiReportError(null); setAiSaved(false); }}
-            data-testid="button-ai-report"
-            className="gap-2 border-primary/50 text-primary hover:bg-primary/10"
-          >
-            <Sparkles className="w-4 h-4" />
-            Tạo báo cáo AI
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSaveAnalysis}
-            disabled={isSavingAnalysis}
-            data-testid="button-save-analysis"
-            className="gap-2"
-          >
-            <Save className="w-4 h-4" />
-            {isSavingAnalysis ? "Đang lưu..." : "Lưu phân tích"}
-          </Button>
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setAiReportOpen(true); setAiReportContent(null); setAiReportError(null); setAiSaved(false); }}
+              data-testid="button-ai-report"
+              className="gap-2 border-primary/50 text-primary hover:bg-primary/10"
+            >
+              <Sparkles className="w-4 h-4" />
+              Tạo báo cáo AI
+            </Button>
+          )}
         </div>
       </div>
 
@@ -2774,6 +2799,15 @@ function CompositeScoreExplanation({
   const [selectedYear, setSelectedYear] = useState<string>(allYears[0] || "");
 
   const indicators = selectedYear === "avg" ? [] : (target.indicators[selectedYear] || []);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const toggleRow = (id: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const sortedYears = [...allYears].sort((a, b) => Number(a) - Number(b));
 
   const rows = indicators.map((ind) => {
     const w = weights[ind.id] ?? 5;
@@ -2798,7 +2832,7 @@ function CompositeScoreExplanation({
     const inds = target.indicators[year] || [];
     const score = calcCompositeScore(inds, weights);
     const n = allYears.length;
-    const recencyWeight = n - idx;
+    const recencyWeight = n - idx * 0.5; // gap 0.5 between years
     return { year, score, recencyWeight };
   });
   const totalW = yearScores.reduce((s, ys) => s + ys.recencyWeight, 0);
@@ -2899,46 +2933,93 @@ function CompositeScoreExplanation({
             </div>
 
             {selectedYear === "avg" ? (
-              /* Avg view: per-year scores and weighted average summary */
+              /* Avg view: per-indicator table with expandable year detail */
               <div className="overflow-x-auto">
+                <p className="text-xs text-muted-foreground mb-2">
+                  Nhấn vào hàng chỉ số để xem chi tiết theo từng năm.
+                </p>
                 <table className="w-full text-xs border-collapse">
                   <thead>
                     <tr style={{ background: "hsl(214, 10%, 95%)" }}>
-                      <th className="text-left px-3 py-2 font-semibold border-b border-border">Năm</th>
-                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số tiếp cận</th>
-                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Điểm rủi ro</th>
-                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Điểm × Trọng số</th>
+                      <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
+                      <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
+                      {sortedYears.map((year) => (
+                        <th key={year} className="text-center px-3 py-2 font-semibold border-b border-border">{year}</th>
+                      ))}
+                      <th className="text-center px-3 py-2 font-semibold border-b border-border">BQ</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {yearScores.map(({ year, score, recencyWeight }) => (
-                      <tr
-                        key={year}
-                        className="border-b border-border/50 hover:bg-accent/30 transition-colors"
-                      >
-                        <td className="px-3 py-2 font-mono font-semibold">{year}</td>
-                        <td className="text-center px-3 py-2">{recencyWeight}</td>
-                        <td className="text-center px-3 py-2 font-bold" style={{ color: scoreColor(score) }}>
-                          {score}/100
-                        </td>
-                        <td className="text-center px-3 py-2 font-mono">
-                          {score * recencyWeight}
-                        </td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      const firstYearInds = target.indicators[allYears[0]] || [];
+                      return firstYearInds.map((ind) => {
+                        const w = weights[ind.id] ?? 5;
+                        const yearSevs = sortedYears.map((year) => {
+                          const yearInd = (target.indicators[year] || []).find((i) => i.id === ind.id);
+                          if (!yearInd) return { sev1: 0, sev2: 0, total: 0 };
+                          const r1 = (yearInd as any).risk_level_1 || yearInd.risk_level || "gray";
+                          const r2 = (yearInd as any).risk_level_2 || "gray";
+                          const sev1 = calcRiskSeverity(r1, yearInd.company_value, (yearInd as any).industry_median, (yearInd as any).industry_p_low, (yearInd as any).industry_p_high);
+                          const sev2 = calcRiskSeverity(r2, yearInd.company_value, (yearInd as any).industry_median, (yearInd as any).industry_p_low, (yearInd as any).industry_p_high);
+                          return { sev1, sev2, total: sev1 + sev2 };
+                        });
+                        const totalSevSum = yearSevs.reduce((s, v) => s + v.total, 0);
+                        const avgSev = yearSevs.length > 0 ? totalSevSum / yearSevs.length : 0;
+                        const isExpanded = expandedRows.has(ind.id);
+                        return (
+                          <>
+                            <tr
+                              key={ind.id}
+                              onClick={() => toggleRow(ind.id)}
+                              className="border-b border-border/50 cursor-pointer hover:bg-accent/30 transition-colors"
+                              style={{ background: avgSev >= 5 ? "hsl(0, 72%, 98%)" : avgSev > 0 ? "hsl(25, 100%, 98%)" : undefined }}
+                            >
+                              <td className="px-3 py-2">
+                                <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
+                                <span>{ind.name}</span>
+                                <span className="ml-1 text-muted-foreground text-[10px]">{isExpanded ? "▲" : "▼"}</span>
+                              </td>
+                              <td className="text-center px-3 py-2">
+                                <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>{w}</span>
+                              </td>
+                              {yearSevs.map((sv, i) => (
+                                <td key={sortedYears[i]} className="text-center px-3 py-2 font-semibold"
+                                  style={{ color: sv.total >= 5 ? "hsl(0, 72%, 45%)" : sv.total > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                                  {sv.total}
+                                </td>
+                              ))}
+                              <td className="text-center px-3 py-2 font-bold"
+                                style={{ color: avgSev >= 5 ? "hsl(0, 72%, 45%)" : avgSev > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                                {avgSev.toFixed(1)}
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr key={`${ind.id}-detail`}>
+                                <td colSpan={2 + sortedYears.length + 1} className="px-0 py-0">
+                                  <div className="p-3 bg-accent/10 text-xs border-b border-border/50">
+                                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${sortedYears.length}, 1fr)` }}>
+                                      {sortedYears.map((year, i) => (
+                                        <div key={year} className="rounded p-2 border" style={{ background: "hsl(214, 10%, 97%)" }}>
+                                          <p className="font-semibold mb-1">{year}</p>
+                                          <p>RR1 Sev: <span style={{ color: yearSevs[i].sev1 > 0 ? "hsl(0,72%,45%)" : "hsl(142,55%,40%)" }}>{yearSevs[i].sev1}</span></p>
+                                          <p>RR2 Sev: <span style={{ color: yearSevs[i].sev2 > 0 ? "hsl(0,72%,45%)" : "hsl(142,55%,40%)" }}>{yearSevs[i].sev2}</span></p>
+                                          <p>Tổng: <strong style={{ color: yearSevs[i].total >= 5 ? "hsl(0,72%,45%)" : yearSevs[i].total > 0 ? "hsl(25,90%,45%)" : "hsl(142,55%,40%)" }}>{yearSevs[i].total}</strong></p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        );
+                      });
+                    })()}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: "hsl(214, 10%, 93%)" }}>
-                      <td className="px-3 py-2 font-bold" colSpan={2}>Tổng trọng số</td>
-                      <td className="text-center px-3 py-2 font-bold" colSpan={2}>
-                        {yearScores.reduce((s, ys) => s + ys.recencyWeight, 0)}
-                      </td>
-                    </tr>
                     <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
-                      <td className="px-3 py-2 font-bold" colSpan={2}>Điểm BQ năm (bình quân tiếp cận)</td>
-                      <td className="text-center px-3 py-2 font-bold text-lg" colSpan={2}>
-                        {avgScore} / 100
-                      </td>
+                      <td className="px-3 py-2 font-bold" colSpan={2 + sortedYears.length}>Điểm BQ năm (bình quân tiếp cận)</td>
+                      <td className="text-center px-3 py-2 font-bold text-lg">{avgScore} / 100</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -3030,7 +3111,7 @@ function CompositeScoreExplanation({
 
 
 function calcRecencyWeight(years: string[], yearIdx: number): number {
-  return years.length - yearIdx; // first (newest) = n, last (oldest) = 1
+  return years.length - yearIdx * 0.5; // first (newest) = n, gap 0.5 between years
 }
 
 function RiskDiagramView({
@@ -3074,7 +3155,7 @@ function RiskDiagramView({
   const diagramData = useMemo(() => {
     const sortedDiagramYears = [...diagramYears].sort((a, b) => Number(b) - Number(a));
     const n = sortedDiagramYears.length;
-    return baseIndicators
+    const filtered = baseIndicators
       .filter((ind) => !hiddenIds.has(ind.id) && !hiddenGroups.has(ind.group))
       .map((ind) => {
         const w = weights[ind.id] ?? 5;
@@ -3160,7 +3241,52 @@ function RiskDiagramView({
         if (filterMode === "both") return d.hasRR1 && d.hasRR2;
         return d.probability > 0;
       });
+
+    // Apply jitter to prevent overlap
+    const JITTER_AMOUNT = 0.04;
+    const processed = [...filtered];
+    for (let i = 0; i < processed.length; i++) {
+      for (let j = i + 1; j < processed.length; j++) {
+        const dx = Math.abs(processed[i].x - processed[j].x);
+        const dy = Math.abs(processed[i].y - processed[j].y);
+        if (dx < 0.05 && dy < 0.05) {
+          processed[j] = {
+            ...processed[j],
+            x: Math.min(1, Math.max(0, processed[j].x + JITTER_AMOUNT * (j % 2 === 0 ? 1 : -1))),
+            y: Math.min(1, Math.max(0, processed[j].y + JITTER_AMOUNT * ((j + 1) % 2 === 0 ? 1 : -1))),
+          };
+        }
+      }
+    }
+    return processed;
   }, [baseIndicators, diagramYears, target, weights, hiddenIds, hiddenGroups, filterMode]);
+
+  const hasOverlaps = useMemo(() => {
+    const raw = baseIndicators
+      .filter((ind) => !hiddenIds.has(ind.id) && !hiddenGroups.has(ind.group))
+      .map((ind) => {
+        const sortedDiagramYears = [...diagramYears].sort((a, b) => Number(b) - Number(a));
+        let probNumerator = 0;
+        let probDenominator = 0;
+        sortedDiagramYears.forEach((year, idx) => {
+          const recencyW = calcRecencyWeight(sortedDiagramYears, idx);
+          probDenominator += recencyW;
+          const yearInd = (target.indicators[year] || []).find((i) => i.id === ind.id);
+          if (!yearInd) return;
+          const r1 = (yearInd as any).risk_level_1 || yearInd.risk_level || "gray";
+          const r2 = (yearInd as any).risk_level_2 || "gray";
+          const isRisky = r1 === "red" || r2 === "red" ? 1 : 0;
+          probNumerator += isRisky * recencyW;
+        });
+        return probDenominator > 0 ? probNumerator / probDenominator : 0;
+      });
+    for (let i = 0; i < raw.length; i++) {
+      for (let j = i + 1; j < raw.length; j++) {
+        if (Math.abs(raw[i] - raw[j]) < 0.05) return true;
+      }
+    }
+    return false;
+  }, [baseIndicators, diagramYears, target, hiddenIds, hiddenGroups]);
 
   const allIndicatorIds = useMemo(() => {
     return baseIndicators.map((i) => ({ id: i.id, name: i.name, group: i.group }));
@@ -3247,10 +3373,10 @@ function RiskDiagramView({
               <label className="text-xs font-medium">Lọc:</label>
               <div className="flex gap-1">
                 {([
-                  { key: "all", label: "Tất cả có rủi ro" },
+                  { key: "all", label: "RR1 hoặc RR2" },
                   { key: "rr1only", label: "Chỉ RR1" },
                   { key: "rr2only", label: "Chỉ RR2" },
-                  { key: "both", label: "Cả hai" },
+                  { key: "both", label: "RR1 và RR2" },
                 ] as const).map(({ key, label }) => (
                   <button
                     key={key}
@@ -3364,6 +3490,12 @@ function RiskDiagramView({
                 </Scatter>
               </ScatterChart>
             </ResponsiveContainer>
+          )}
+
+          {hasOverlaps && (
+            <p className="text-xs text-muted-foreground italic mt-1">
+              * Một số chỉ số có tọa độ gần nhau đã được điều chỉnh nhẹ để tránh chồng lấp
+            </p>
           )}
 
           {/* Explanation */}
@@ -3527,7 +3659,7 @@ function RiskScoringEditor({
       allYears.forEach((year, idx) => {
         const inds = result.target.indicators[year] || [];
         const score = calcCompositeScore(inds, weights);
-        const recencyWeight = n - idx;
+        const recencyWeight = n - idx * 0.5; // gap 0.5
         totalW += recencyWeight;
         totalWS += score * recencyWeight;
       });

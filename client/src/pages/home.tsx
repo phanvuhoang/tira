@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -374,22 +375,25 @@ export default function Home() {
                 {comparisonTickers.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 sm:gap-2">
                     {comparisonTickers.map((c) => (
-                      <Badge
-                        key={c.ma_ck}
-                        variant="secondary"
-                        className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm gap-1.5 sm:gap-2"
-                      >
-                        <span className="font-semibold">{c.ma_ck}</span>
-                        <span className="text-muted-foreground text-xs truncate max-w-[100px] sm:max-w-[150px]">
-                          {c.ten_tv}
-                        </span>
-                        <button
-                          onClick={() => handleRemoveComparison(c.ma_ck)}
-                          data-testid={`button-remove-comp-${c.ma_ck}`}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </Badge>
+                      <Tooltip key={c.ma_ck}>
+                        <TooltipTrigger asChild>
+                          <Badge
+                            variant="secondary"
+                            className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm gap-1.5 sm:gap-2"
+                          >
+                            <span className="font-semibold">{c.ma_ck}</span>
+                            <button
+                              onClick={() => handleRemoveComparison(c.ma_ck)}
+                              data-testid={`button-remove-comp-${c.ma_ck}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{c.ten_tv}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                   </div>
                 )}
@@ -457,19 +461,24 @@ export default function Home() {
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {comparables.slice(0, 10).map((c) => (
-                        <Button
-                          key={c.ma_ck}
-                          variant="ghost"
-                          size="sm"
-                          className="h-auto text-xs px-2 py-1"
-                          onClick={() => handleAddComparison(c)}
-                          disabled={!!comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck)}
-                          data-testid={`suggest-${c.ma_ck}`}
-                        >
-                          <Plus className="w-3 h-3 mr-1" />
-                          <span className="font-semibold">{c.ma_ck}</span>
-                          <span className="text-muted-foreground ml-1 truncate max-w-[100px]">{c.ten_tv}</span>
-                        </Button>
+                        <Tooltip key={c.ma_ck}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-auto text-xs px-2 py-1"
+                              onClick={() => handleAddComparison(c)}
+                              disabled={!!comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck)}
+                              data-testid={`suggest-${c.ma_ck}`}
+                            >
+                              <Plus className="w-3 h-3 mr-1" />
+                              {c.ma_ck}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{c.ten_tv}</p>
+                          </TooltipContent>
+                        </Tooltip>
                       ))}
                     </div>
                   </div>

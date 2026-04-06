@@ -704,6 +704,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         ticker,
         report_type = "Parent",
         years = [],
+        selected_years,
         comparisons = [],
         percentile_low = 25,
         percentile_high = 75,
@@ -750,16 +751,41 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const { company, selectedYears, finData, targetIndicators, compResults } = analysis;
       const companyName = company.ten_tv || company.name || ticker;
 
-      // Build concise data summary - only risky indicators
-      const latestYear = selectedYears[0];
-      const targetInds = targetIndicators[latestYear] || [];
-      const riskyInds = targetInds.filter((i: any) => i.risk_level_1 === "red" || i.risk_level_2 === "red");
+      // Determine which years to include in the report
+      const reportYears: string[] = (selected_years && Array.isArray(selected_years) && selected_years.length > 0)
+        ? selected_years.filter((y: string) => selectedYears.includes(y))
+        : selectedYears;
 
-      // Key financial summary (compact)
+      const latestYear = reportYears[0];
+
+      // Key financial summary from latest year (compact)
       const latestFin = finData?.[latestYear] || {};
       const financialSummary = `Doanh thu thuần: ${latestFin["210"] || "N/A"}, Giá vốn: ${latestFin["211"] || "N/A"}, LN gộp: ${latestFin["220"] || "N/A"}, LNKT trước thuế: ${latestFin["250"] || "N/A"}, CP thuế hiện hành: ${latestFin["251"] || "N/A"}, LN sau thuế: ${latestFin["260"] || "N/A"}, Tổng TS: ${latestFin["1270"] || "N/A"}, Nợ PT: ${latestFin["1300"] || "N/A"}, VCSH: ${latestFin["1400"] || "N/A"}`;
 
-      // Compact indicator data
+      // Build per-year risk data
+      const analysisResult = { target: { indicators: targetIndicators } };
+      const yearSummaries: string[] = [];
+      for (const year of reportYears) {
+        const yearInds = analysisResult.target.indicators[year] || [];
+        const risky = yearInds.filter((i: any) => i.risk_level_1 === "red" || i.risk_level_2 === "red");
+        if (risky.length === 0) {
+          yearSummaries.push(`Năm ${year}: Không có chỉ số rủi ro.`);
+          continue;
+        }
+        const indSummary = risky.map((i: any) =>
+          `  - ${i.id} ${i.name}: ${i.company_value?.toFixed(4) ?? "N/A"}, RR1=${i.risk_level_1}, RR2=${i.risk_level_2}`
+        ).join('\n');
+        yearSummaries.push(`Năm ${year} (${risky.length} chỉ số rủi ro):\n${indSummary}`);
+      }
+      let allYearData = yearSummaries.join('\n\n');
+      // Truncate if too long (keep under 3000 chars for the data part)
+      if (allYearData.length > 3000) {
+        allYearData = allYearData.substring(0, 2997) + "...";
+      }
+
+      // For backward compat: latest-year risky indicators (used in financial prompt)
+      const latestInds = targetIndicators[latestYear] || [];
+      const riskyInds = latestInds.filter((i: any) => i.risk_level_1 === "red" || i.risk_level_2 === "red");
       const indicatorSummary = riskyInds.map((i: any) =>
         `${i.id} ${i.name}: value=${i.company_value}, RR1=${i.risk_level_1}, RR2=${i.risk_level_2}, median=${i.industry_median}, range=[${i.industry_p_low}-${i.industry_p_high}]`
       ).join('\n');
@@ -773,7 +799,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         let prompt = "";
 
         if (rType === "financial") {
-          prompt = `Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${selectedYears.join(', ')}.
+          prompt = `Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${reportYears.join(', ')}.
 
 Số liệu chính (${latestYear}): ${financialSummary}
 
@@ -784,16 +810,16 @@ Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
 
 KHÔNG phân tích chi tiết các điểm an toàn. Chỉ tập trung vào rủi ro và connections.`;
         } else if (rType === "tax") {
-          prompt = `Phân tích rủi ro thuế công ty ${ticker} (${companyName}), năm ${selectedYears.join(', ')}.
+          prompt = `Phân tích rủi ro thuế công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
 
-Các chỉ số có rủi ro:
-${indicatorSummary}
+Dữ liệu chỉ số rủi ro theo từng năm:
+${allYearData}
 
-Số liệu tài chính chính: ${financialSummary}
+Số liệu tài chính chính (${latestYear}): ${financialSummary}
 
 Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
-1. Executive Summary: tổng quan rủi ro (3-5 dòng)
-2. Phân tích từng chỉ số rủi ro: lý do, ý nghĩa, và mối liên hệ với các chỉ số khác
+1. Executive Summary: tổng quan rủi ro qua các năm (3-5 dòng)
+2. Phân tích từng chỉ số rủi ro theo năm: lý do, ý nghĩa, và xu hướng
 3. Kết nối giữa các rủi ro (ví dụ: DT tăng nhưng ETR giảm)
 4. Khuyến nghị hành động (3-5 bullet points)
 
