@@ -9,9 +9,21 @@ import {
   AlertTriangle,
   Loader2,
   Download,
+  Building2,
+  BarChart3,
+  Info,
 } from "lucide-react";
 
-export default function UploadPage() {
+// ─── UploadSection ─────────────────────────────────────────────────────────────
+
+interface UploadSectionProps {
+  title: string;
+  description: string;
+  uploadType: "parent" | "consolidated" | "general";
+  icon: React.ReactNode;
+}
+
+function UploadSection({ title, description, uploadType, icon }: UploadSectionProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -34,6 +46,27 @@ export default function UploadPage() {
     }
   };
 
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f) {
+      if (!f.name.endsWith(".xlsx") && !f.name.endsWith(".xls")) {
+        toast({
+          title: "Lỗi",
+          description: "Chỉ hỗ trợ file Excel (.xlsx, .xls)",
+          variant: "destructive",
+        });
+        return;
+      }
+      setFile(f);
+      setResult(null);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
   const handleUpload = async () => {
     if (!file) return;
 
@@ -45,7 +78,7 @@ export default function UploadPage() {
       formData.append("file", file);
 
       const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
-      const res = await fetch(`${API_BASE}/api/upload`, {
+      const res = await fetch(`${API_BASE}/api/upload?type=${uploadType}`, {
         method: "POST",
         body: formData,
       });
@@ -81,152 +114,161 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="min-h-screen p-4 lg:p-8">
-      <div className="max-w-2xl mx-auto space-y-6">
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          {icon}
+          {title}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Drop zone */}
+        <div
+          className="border-2 border-dashed border-border rounded-lg p-5 sm:p-7 text-center cursor-pointer hover:border-primary/50 hover:bg-accent/30 transition-colors"
+          onClick={() => fileRef.current?.click()}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          data-testid={`dropzone-${uploadType}`}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={handleFileChange}
+            data-testid={`input-file-${uploadType}`}
+          />
+          <FileSpreadsheet className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+          {file ? (
+            <div>
+              <p className="text-sm font-semibold">{file.name}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {(file.size / 1024 / 1024).toFixed(2)} MB
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-sm font-medium">Nhấn để chọn file hoặc kéo thả vào đây</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Hỗ trợ: .xlsx, .xls</p>
+            </div>
+          )}
+        </div>
+
+        {/* Upload button */}
+        <Button
+          className="w-full"
+          disabled={!file || uploading}
+          onClick={handleUpload}
+          data-testid={`button-upload-${uploadType}`}
+        >
+          {uploading ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Đang xử lý...
+            </>
+          ) : (
+            <>
+              <Upload className="w-4 h-4 mr-2" />
+              Tải lên và xử lý
+            </>
+          )}
+        </Button>
+
+        {/* Result */}
+        {result && (
+          <div
+            className={`flex items-start gap-3 p-3 rounded-lg ${
+              result.success
+                ? "bg-[hsl(142,55%,40%,0.1)] text-[hsl(142,55%,35%)]"
+                : "bg-[hsl(0,72%,48%,0.1)] text-[hsl(0,72%,42%)]"
+            }`}
+            data-testid={`upload-result-${uploadType}`}
+          >
+            {result.success ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+            <p className="text-sm">{result.message}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── UploadPage ────────────────────────────────────────────────────────────────
+
+export default function UploadPage() {
+  return (
+    <div className="min-h-screen p-3 sm:p-4 lg:p-8">
+      <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+        {/* Header */}
         <div className="pt-8 lg:pt-4">
           <h1 className="text-xl font-bold" data-testid="text-upload-title">
             Tải dữ liệu mới
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Upload file Excel (.xlsx) có cấu trúc tương tự file dữ liệu gốc
+            Upload file Excel (.xlsx) cho từng loại dữ liệu. Không cần đặt tên sheet cụ thể — hệ thống sẽ tự nhận diện sheet đầu tiên.
           </p>
         </div>
 
         {/* Template download */}
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Download className="w-4 h-4 text-primary" />
-              Tải template nhập liệu
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Tải file Excel mẫu để nhập dữ liệu đúng định dạng yêu cầu. File template bao gồm các sheet
-              <strong> financial_full</strong> và <strong>general_data</strong> với cấu trúc cột chuẩn.
-            </p>
-            <a
-              href="/api/template/download"
-              download
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-              data-testid="btn-download-template"
-            >
-              <Download className="w-4 h-4" />
-              Tải template Excel
-            </a>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Upload className="w-4 h-4 text-primary" />
-              Tải lên file dữ liệu
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Drop zone */}
-            <div
-              className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-accent/30 transition-colors"
-              onClick={() => fileRef.current?.click()}
-              data-testid="dropzone"
-            >
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={handleFileChange}
-                data-testid="input-file"
-              />
-              <FileSpreadsheet className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-              {file ? (
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <Download className="w-4 h-4 text-primary mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold">{file.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  <h3 className="font-semibold text-sm">Tải template nhập liệu</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Template Excel mẫu với cấu trúc cột chuẩn
                   </p>
                 </div>
-              ) : (
-                <div>
-                  <p className="text-sm font-medium">
-                    Nhấn để chọn file hoặc kéo thả vào đây
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Hỗ trợ: .xlsx, .xls
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Upload button */}
-            <Button
-              className="w-full"
-              disabled={!file || uploading}
-              onClick={handleUpload}
-              data-testid="button-upload"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Đang xử lý...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Tải lên và xử lý
-                </>
-              )}
-            </Button>
-
-            {/* Result */}
-            {result && (
-              <div
-                className={`flex items-start gap-3 p-4 rounded-lg ${
-                  result.success
-                    ? "bg-[hsl(142,55%,40%,0.1)] text-[hsl(142,55%,35%)]"
-                    : "bg-[hsl(0,72%,48%,0.1)] text-[hsl(0,72%,42%)]"
-                }`}
-                data-testid="upload-result"
-              >
-                {result.success ? (
-                  <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                )}
-                <p className="text-sm">{result.message}</p>
               </div>
-            )}
+              <a
+                href="/api/template/download"
+                download
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors w-full sm:w-auto"
+                data-testid="btn-download-template"
+              >
+                <Download className="w-4 h-4" />
+                Tải template Excel
+              </a>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Instructions */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">
-              Hướng dẫn định dạng file
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-3">
-            <p>File Excel cần có các sheet sau:</p>
-            <ul className="list-disc list-inside space-y-1.5 ml-2">
-              <li>
-                <span className="font-medium text-foreground">financial_full</span>: Dữ liệu tài chính
-                công ty mẹ. Hàng 1: tiêu đề, Hàng 2: ngày/năm, Hàng 3: mã CK, Hàng 4+: giá trị
-                theo mã chỉ tiêu BCTC.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">general_data</span> (tuỳ chọn): Thông
-                tin công ty mới. Cột bao gồm: Mã CK, Name, Tên tiếng Việt, Sàn, Ngành cấp 1-4,
-                Loại doanh nghiệp, Vốn điều lệ.
-              </li>
-            </ul>
-            <p>
-              Dữ liệu mới sẽ được cộng gộp vào dữ liệu hiện có. Các mã CK đã tồn tại
-              sẽ được cập nhật thêm dữ liệu năm mới.
-            </p>
-          </CardContent>
-        </Card>
+        {/* Info notice */}
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent/40 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>
+            Mỗi file chỉ cần có <strong className="text-foreground">1 sheet dữ liệu</strong> — hệ thống đọc sheet đầu tiên. Dữ liệu mới sẽ được cộng gộp vào dữ liệu hiện có.
+          </span>
+        </div>
+
+        {/* 3 Upload sections */}
+        <UploadSection
+          title="Dữ liệu tài chính – Công ty mẹ"
+          description="File Excel chứa dữ liệu BCTC riêng của công ty mẹ. Dùng cho phân tích loại báo cáo 'Công ty mẹ'. Sheet đầu tiên sẽ được dùng làm nguồn dữ liệu."
+          uploadType="parent"
+          icon={<Building2 className="w-4 h-4 text-primary" />}
+        />
+
+        <UploadSection
+          title="Dữ liệu tài chính – Hợp nhất"
+          description="File Excel chứa dữ liệu BCTC hợp nhất. Dùng cho phân tích loại báo cáo 'Hợp nhất'. Sheet đầu tiên sẽ được dùng làm nguồn dữ liệu."
+          uploadType="consolidated"
+          icon={<BarChart3 className="w-4 h-4 text-primary" />}
+        />
+
+        <UploadSection
+          title="Thông tin công ty"
+          description="File Excel chứa thông tin công ty (mã CK, tên, ngành, vốn điều lệ). Dùng để thêm công ty mới vào hệ thống."
+          uploadType="general"
+          icon={<FileSpreadsheet className="w-4 h-4 text-primary" />}
+        />
       </div>
     </div>
   );

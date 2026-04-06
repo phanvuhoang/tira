@@ -579,6 +579,7 @@ export default function Dashboard() {
   const [aiSaving, setAiSaving] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
   const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
+  const [scoringYear, setScoringYear] = useState<string>("all");
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
   const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
 
@@ -910,7 +911,7 @@ export default function Dashboard() {
 
   if (isLoading && !isCustom) {
     return (
-      <div className="p-4 lg:p-8 space-y-4">
+      <div className="p-2 sm:p-4 lg:p-8 space-y-4">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-4 gap-4">
           <Skeleton className="h-24" />
@@ -939,7 +940,7 @@ export default function Dashboard() {
   const allYears = target.years;
 
   return (
-    <div className="p-4 lg:p-8 space-y-6">
+    <div className="p-2 sm:p-4 lg:p-8 space-y-4 sm:space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
@@ -1243,7 +1244,7 @@ export default function Dashboard() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="w-full justify-start flex-wrap h-auto gap-1">
+        <TabsList className="w-full justify-start flex-wrap h-auto gap-1 overflow-x-auto">
           <TabsTrigger value="heatmap" data-testid="tab-heatmap">Bảng nhiệt</TabsTrigger>
           <TabsTrigger value="charts" data-testid="tab-charts">Biểu đồ</TabsTrigger>
           <TabsTrigger value="comparison" data-testid="tab-comparison">So sánh</TabsTrigger>
@@ -1251,7 +1252,7 @@ export default function Dashboard() {
           <TabsTrigger value="analysis" data-testid="tab-analysis">Phân tích</TabsTrigger>
           <TabsTrigger value="risk-heatmap" data-testid="tab-risk-heatmap">Biểu đồ nhiệt</TabsTrigger>
           <TabsTrigger value="risk-diagram" data-testid="tab-risk-diagram">Risk Diagram</TabsTrigger>
-          <TabsTrigger value="giai-thich" data-testid="tab-giai-thich">Giải thích</TabsTrigger>
+          <TabsTrigger value="explanation" data-testid="tab-giai-thich">Tính điểm RR</TabsTrigger>
         </TabsList>
 
         <TabsContent value="heatmap" className="mt-4">
@@ -1282,40 +1283,44 @@ export default function Dashboard() {
           <RiskDiagramView result={result} weights={customWeights} />
         </TabsContent>
 
-        <TabsContent value="giai-thich" className="mt-4">
+        <TabsContent value="explanation" className="mt-4">
           <CompositeScoreExplanation result={result} weights={customWeights} />
         </TabsContent>
       </Tabs>
 
-      {/* Risk Scoring Editor Panel */}
-      <div className="mt-6">
-        <button
-          data-testid="btn-toggle-scoring-panel"
-          onClick={() => setScoringPanelOpen(!scoringPanelOpen)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors w-full"
-          style={{
-            background: scoringPanelOpen ? "hsl(144, 50%, 12%)" : "hsl(214, 10%, 97%)",
-            borderColor: scoringPanelOpen ? "hsl(144, 97%, 27%)" : "hsl(214, 10%, 85%)",
-            color: scoringPanelOpen ? "hsl(144, 77%, 50%)" : "hsl(215, 20%, 40%)",
-          }}
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-          Risk Weighting - Tầm quan trọng chỉ số
-          {scoringPanelOpen ? (
-            <ChevronUp className="w-4 h-4 ml-auto" />
-          ) : (
-            <ChevronDown className="w-4 h-4 ml-auto" />
-          )}
-        </button>
+      {/* Risk Scoring Editor Panel - only show on relevant tabs */}
+      {(activeTab === "risk-diagram" || activeTab === "explanation" || activeTab === "risk-heatmap") && (
+        <div className="mt-6">
+          <button
+            data-testid="btn-toggle-scoring-panel"
+            onClick={() => setScoringPanelOpen(!scoringPanelOpen)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors w-full"
+            style={{
+              background: scoringPanelOpen ? "hsl(144, 50%, 12%)" : "hsl(214, 10%, 97%)",
+              borderColor: scoringPanelOpen ? "hsl(144, 97%, 27%)" : "hsl(214, 10%, 85%)",
+              color: scoringPanelOpen ? "hsl(144, 77%, 50%)" : "hsl(215, 20%, 40%)",
+            }}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Risk Weighting - Tầm quan trọng chỉ số
+            {scoringPanelOpen ? (
+              <ChevronUp className="w-4 h-4 ml-auto" />
+            ) : (
+              <ChevronDown className="w-4 h-4 ml-auto" />
+            )}
+          </button>
 
-        {scoringPanelOpen && (
-          <RiskScoringEditor
-            result={result}
-            weights={customWeights}
-            onWeightsChange={setCustomWeights}
-          />
-        )}
-      </div>
+          {scoringPanelOpen && (
+            <RiskScoringEditor
+              result={result}
+              weights={customWeights}
+              onWeightsChange={setCustomWeights}
+              scoringYear={scoringYear}
+              onScoringYearChange={setScoringYear}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2095,8 +2100,8 @@ function DetailView({ result }: { result: AnalysisResult }) {
 /* ========== ANALYSIS VIEW (new tab) ========== */
 function AnalysisView({ result }: { result: AnalysisResult }) {
   const { target } = result;
-  const latestYear = target.years[0];
-  const indicators = target.indicators[latestYear] || [];
+  const [analysisYear, setAnalysisYear] = useState(target.years[0]);
+  const indicators = target.indicators[analysisYear] || [];
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) => {
@@ -2130,12 +2135,27 @@ function AnalysisView({ result }: { result: AnalysisResult }) {
 
   return (
     <div className="space-y-6">
+      {/* Year selector */}
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-sm text-muted-foreground">Năm:</span>
+        {target.years.map(year => (
+          <Button
+            key={year}
+            variant={analysisYear === year ? "default" : "outline"}
+            size="sm"
+            onClick={() => setAnalysisYear(year)}
+          >
+            {year}
+          </Button>
+        ))}
+      </div>
+
       {/* Summary */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base font-semibold">
-              Phân tích ý nghĩa cảnh báo - {target.company.ma_ck} ({latestYear})
+              Phân tích ý nghĩa cảnh báo - {target.company.ma_ck} ({analysisYear})
             </CardTitle>
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" onClick={expandAll} className="text-xs h-7">
@@ -2693,14 +2713,16 @@ function CompositeScoreExplanation({
     const sev1 = calcRiskSeverity(r1, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
     const sev2 = calcRiskSeverity(r2, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
     const totalSev = sev1 + sev2;
-    const weightedContrib = totalSev * w;
-    const maxContrib = 10 * w;
+    // Only count indicators with risk (same logic as calcCompositeScore)
+    const weightedContrib = totalSev > 0 ? totalSev * w : 0;
+    const maxContrib = totalSev > 0 ? 10 * w : 0;
     return { ind, w, r1, r2, sev1, sev2, totalSev, weightedContrib, maxContrib };
   });
 
   const totalWeightedRisk = rows.reduce((sum, r) => sum + r.weightedContrib, 0);
   const totalWeightedMax = rows.reduce((sum, r) => sum + r.maxContrib, 0);
-  const compositeScore = totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
+  // Use calcCompositeScore for consistency (skips safe indicators)
+  const compositeScore = calcCompositeScore(indicators, weights);
 
   // Per-year scores
   const yearScores = allYears.map((year, idx) => {
@@ -2721,7 +2743,7 @@ function CompositeScoreExplanation({
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">
-            Giải thích cách tính điểm rủi ro tổng hợp
+            Tính điểm RR – Giải thích cách tính điểm rủi ro tổng hợp
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -3313,18 +3335,39 @@ function RiskScoringEditor({
   result,
   weights,
   onWeightsChange,
+  scoringYear,
+  onScoringYearChange,
 }: {
   result: AnalysisResult;
   weights: Record<string, number>;
   onWeightsChange: (w: Record<string, number>) => void;
+  scoringYear: string;
+  onScoringYearChange: (year: string) => void;
 }) {
-  const latestYear = result.target.years[0];
-  const indicators = result.target.indicators[latestYear] || [];
+  const allYears = result.target.years;
+  const latestYear = allYears[0];
 
-  const compositeScore = useMemo(
-    () => calcCompositeScore(indicators, weights),
-    [indicators, weights]
-  );
+  // Determine which indicators/score to show based on scoringYear
+  const displayYear = scoringYear === "all" ? latestYear : scoringYear;
+  const indicators = result.target.indicators[displayYear] || [];
+
+  // Score for selected year or weighted average
+  const compositeScore = useMemo(() => {
+    if (scoringYear === "all") {
+      // Weighted average across all years (recency-weighted)
+      const n = allYears.length;
+      let totalW = 0, totalWS = 0;
+      allYears.forEach((year, idx) => {
+        const inds = result.target.indicators[year] || [];
+        const score = calcCompositeScore(inds, weights);
+        const recencyWeight = n - idx;
+        totalW += recencyWeight;
+        totalWS += score * recencyWeight;
+      });
+      return totalW > 0 ? Math.round(totalWS / totalW) : 0;
+    }
+    return calcCompositeScore(indicators, weights);
+  }, [scoringYear, indicators, weights, allYears, result]);
 
   const scoreColor =
     compositeScore >= 60
@@ -3360,6 +3403,30 @@ function RiskScoringEditor({
         </p>
       </CardHeader>
       <CardContent>
+        {/* Year selector */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs text-muted-foreground">Năm:</span>
+          <Button
+            variant={scoringYear === "all" ? "default" : "outline"}
+            size="sm"
+            className="h-6 text-xs"
+            onClick={() => onScoringYearChange("all")}
+          >
+            Tất cả (BQ)
+          </Button>
+          {allYears.map(year => (
+            <Button
+              key={year}
+              variant={scoringYear === year ? "default" : "outline"}
+              size="sm"
+              className="h-6 text-xs"
+              onClick={() => onScoringYearChange(year)}
+            >
+              {year}
+            </Button>
+          ))}
+        </div>
+
         {/* Composite score gauge */}
         <div
           className="flex items-center gap-6 p-4 rounded-xl mb-6 border"
@@ -3403,6 +3470,8 @@ function RiskScoringEditor({
           <div>
             <p className="text-sm font-semibold" style={{ color: scoreColor }}>
               Điểm rủi ro: {compositeScore}/100
+              {scoringYear !== "all" && <span className="text-xs font-normal ml-1 text-muted-foreground">(năm {scoringYear})</span>}
+              {scoringYear === "all" && <span className="text-xs font-normal ml-1 text-muted-foreground">(bình quân)</span>}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {compositeScore >= 60
@@ -3412,7 +3481,7 @@ function RiskScoringEditor({
                 : "Rủi ro thấp – tương đối an toàn"}
             </p>
             <p className="text-[11px] text-muted-foreground/60 mt-1">
-              Dựa trên {indicators.length} chỉ số năm {latestYear}
+              Dựa trên {indicators.length} chỉ số năm {displayYear}
             </p>
           </div>
         </div>
@@ -3435,7 +3504,7 @@ function RiskScoringEditor({
                   return (
                     <div
                       key={ind.id}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg border"
+                      className="flex flex-wrap items-center gap-3 px-3 py-2 rounded-lg border"
                       style={{
                         borderColor: hasRisk ? `${WEIGHT_COLORS_SCORING[w]}40` : "hsl(214, 10%, 90%)",
                         background: hasRisk ? `${WEIGHT_COLORS_SCORING[w]}08` : "hsl(214, 10%, 98%)",

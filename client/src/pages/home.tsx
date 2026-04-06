@@ -146,10 +146,10 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen p-4 lg:p-8">
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="min-h-screen p-3 sm:p-4 lg:p-8">
+      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="pt-8 lg:pt-4">
+        <div className="pt-10 lg:pt-4">
           <h1 className="text-xl font-bold" data-testid="text-page-title">
             Phân tích rủi ro thuế
           </h1>
@@ -286,7 +286,7 @@ export default function Home() {
                         <label className="text-sm font-medium mb-1.5 block">
                           Năm phân tích
                         </label>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
                           {companyDetails.availableYears.map((year) => (
                             <Button
                               key={year}
@@ -328,7 +328,7 @@ export default function Home() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <label className="text-sm font-medium mb-1.5 block">
                       Phân vị dưới (%)
@@ -372,15 +372,15 @@ export default function Home() {
               <CardContent className="space-y-3">
                 {/* Selected comparisons */}
                 {comparisonTickers.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5 sm:gap-2">
                     {comparisonTickers.map((c) => (
                       <Badge
                         key={c.ma_ck}
                         variant="secondary"
-                        className="px-3 py-1.5 text-sm gap-2"
+                        className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm gap-1.5 sm:gap-2"
                       >
                         <span className="font-semibold">{c.ma_ck}</span>
-                        <span className="text-muted-foreground text-xs truncate max-w-[150px]">
+                        <span className="text-muted-foreground text-xs truncate max-w-[100px] sm:max-w-[150px]">
                           {c.ten_tv}
                         </span>
                         <button

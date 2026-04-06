@@ -452,127 +452,47 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const XLSX = await import("xlsx");
       const workbook = XLSX.readFile(req.file.path);
 
+      // uploadType is set by the new 3-slot UI; falls back to "auto" for
+      // backward-compatible behaviour (sheet-name-based detection).
+      const uploadType = (req.query.type as string) || "auto";
+
       let addedCompanies = 0;
       let addedFinancial = 0;
 
-      // ── Parse financial_full sheet (existing format) ──────────
-      if (workbook.SheetNames.includes("financial_full")) {
-        const ws = workbook.Sheets["financial_full"];
+      // ── Helper: parse a financial sheet in the standard matrix layout ──
+      // Row 0: labels, Row 1: dates (YYYYMMDD…), Row 2: tickers,
+      // Row 3+: data rows keyed by column A.
+      const parseFinancialSheet = (
+        ws: any,
+        storageTarget: Record<string, Record<string, Record<string, any>>>,
+        suffix: string
+      ) => {
         const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-
-        if (data.length > 3) {
-          const dateRow = data[1];
-          const tickerRow = data[2];
-
-          for (let col = 2; col < dateRow.length; col++) {
-            const dateVal = dateRow[col];
-            const tickerVal = tickerRow[col];
-            if (!dateVal || !tickerVal) continue;
-
-            const year = String(dateVal).substring(0, 4);
-            const tk = `${tickerVal} - Parent`;
-
-            if (!storage.financialFull[tk]) {
-              storage.financialFull[tk] = {};
-            }
-            if (!storage.financialFull[tk][year]) {
-              storage.financialFull[tk][year] = {};
-            }
-
-            for (let row = 3; row < data.length; row++) {
-              const key = String(data[row][0]);
-              const val = data[row][col];
-              if (key && val !== undefined && val !== null) {
-                storage.financialFull[tk][year][key] = val;
-                addedFinancial++;
-              }
+        if (data.length <= 3) return;
+        const dateRow = data[1];
+        const tickerRow = data[2];
+        for (let col = 2; col < dateRow.length; col++) {
+          const dateVal = dateRow[col];
+          const tickerVal = tickerRow[col];
+          if (!dateVal || !tickerVal) continue;
+          const year = String(dateVal).substring(0, 4);
+          const tk = `${tickerVal} - ${suffix}`;
+          if (!storageTarget[tk]) storageTarget[tk] = {};
+          if (!storageTarget[tk][year]) storageTarget[tk][year] = {};
+          for (let row = 3; row < data.length; row++) {
+            const key = String(data[row][0]);
+            const val = data[row][col];
+            if (key && val !== undefined && val !== null && val !== "") {
+              storageTarget[tk][year][key] = val;
+              addedFinancial++;
             }
           }
         }
-      }
+      };
 
-      // ── Parse financial_data sheet (template format) ──────────
-      // Template layout:
-      //   B3 = company name, B4 = ticker, B5 = industry
-      //   Row 7 = headers: Key | Khoản mục | 2024 | 2023 | ...
-      //   Row 8+ = data rows: col A = key, col B = name, col C+ = yearly values
-      if (workbook.SheetNames.includes("financial_data")) {
-        const ws = workbook.Sheets["financial_data"];
-        const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][];
-
-        // Extract metadata from rows 3-5 (0-indexed: rows 2-4)
-        const templateTicker =
-          rawData[3] && rawData[3][1] != null ? String(rawData[3][1]).trim() : "";
-        const templateCompanyName =
-          rawData[2] && rawData[2][1] != null ? String(rawData[2][1]).trim() : "";
-        const templateIndustry =
-          rawData[4] && rawData[4][1] != null ? String(rawData[4][1]).trim() : "";
-
-        if (templateTicker) {
-          // Header row is row 7 (0-indexed: row 6)
-          const headerRow: any[] = rawData[6] || [];
-          // Years start at column index 2 (C onwards)
-          const yearCols: { year: string; colIdx: number }[] = [];
-          for (let c = 2; c < headerRow.length; c++) {
-            const cellVal = headerRow[c];
-            if (cellVal != null && String(cellVal).trim() !== "") {
-              yearCols.push({ year: String(cellVal).trim(), colIdx: c });
-            }
-          }
-
-          // Initialise storage for this ticker
-          const tk = `${templateTicker} - Parent`;
-          if (!storage.financialFull[tk]) {
-            storage.financialFull[tk] = {};
-          }
-          for (const { year } of yearCols) {
-            if (!storage.financialFull[tk][year]) {
-              storage.financialFull[tk][year] = {};
-            }
-          }
-
-          // Data rows start at row 8 (0-indexed: row 7)
-          for (let r = 7; r < rawData.length; r++) {
-            const row = rawData[r];
-            if (!row) continue;
-            const key = row[0] != null ? String(row[0]).trim() : "";
-            if (!key) continue;
-
-            for (const { year, colIdx } of yearCols) {
-              const val = row[colIdx];
-              if (val !== null && val !== undefined && val !== "") {
-                storage.financialFull[tk][year][key] = val;
-                addedFinancial++;
-              }
-            }
-          }
-
-          // Register company if not already present
-          if (!storage.companyMap.has(templateTicker)) {
-            const newCompany = {
-              ma_ck: templateTicker,
-              name: templateCompanyName,
-              ten_tv: templateCompanyName,
-              san: "",
-              nganh_1: "",
-              nganh_2: templateIndustry,
-              nganh_3: "",
-              nganh_4: "",
-              loai_dn: "",
-              von_dieu_le: 0,
-            };
-            storage.companies.push(newCompany);
-            storage.companyMap.set(templateTicker, newCompany);
-            addedCompanies++;
-          }
-        }
-      }
-
-      // ── Parse general_data sheet for new companies ────────────
-      if (workbook.SheetNames.includes("general_data")) {
-        const ws = workbook.Sheets["general_data"];
+      // ── Helper: parse general company-info sheet ──────────────
+      const parseGeneralSheet = (ws: any) => {
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-
         for (const row of data) {
           const ma_ck = row["Mã CK"];
           if (ma_ck && !storage.companyMap.has(ma_ck)) {
@@ -593,51 +513,134 @@ export async function registerRoutes(httpServer: Server, app: Express) {
             addedCompanies++;
           }
         }
-      }
+      };
 
-      // Parse financial_pc sheet (consolidated reports)
-      if (workbook.SheetNames.includes("financial_pc")) {
-        const ws = workbook.Sheets["financial_pc"];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+      // ═══════════════════════════════════════════════════════
+      // TYPE-SPECIFIC UPLOAD (new 3-slot UI)
+      // Always uses the FIRST sheet regardless of its name.
+      // ═══════════════════════════════════════════════════════
 
-        if (data.length > 3) {
-          const dateRow = data[1];
-          const tickerRow = data[2];
+      if (uploadType === "parent") {
+        // First sheet → parent financial data (financial_full storage)
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        parseFinancialSheet(firstSheet, storage.financialFull, "Parent");
 
-          for (let col = 2; col < dateRow.length; col++) {
-            const dateVal = dateRow[col];
-            const tickerVal = tickerRow[col];
-            if (!dateVal || !tickerVal) continue;
+      } else if (uploadType === "consolidated") {
+        // First sheet → consolidated financial data (financialPC storage)
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        parseFinancialSheet(firstSheet, storage.financialPC, "Consolidated");
 
-            const year = String(dateVal).substring(0, 4);
-            const tk = `${tickerVal} - Consolidated`;
+      } else if (uploadType === "general") {
+        // First sheet → company info
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        parseGeneralSheet(firstSheet);
 
-            if (!storage.financialPC[tk]) {
-              storage.financialPC[tk] = {};
-            }
-            if (!storage.financialPC[tk][year]) {
-              storage.financialPC[tk][year] = {};
-            }
+      } else {
+        // ═══════════════════════════════════════════════════════
+        // AUTO / BACKWARD-COMPATIBLE: detect by sheet name
+        // ═══════════════════════════════════════════════════════
 
-            for (let row = 3; row < data.length; row++) {
-              const key = String(data[row][0]);
-              const val = data[row][col];
-              if (key && val !== undefined && val !== null && val !== "") {
-                storage.financialPC[tk][year][key] = val;
-                addedFinancial++;
+        // financial_full → parent data
+        if (workbook.SheetNames.includes("financial_full")) {
+          parseFinancialSheet(
+            workbook.Sheets["financial_full"],
+            storage.financialFull,
+            "Parent"
+          );
+        }
+
+        // financial_pc → consolidated data
+        if (workbook.SheetNames.includes("financial_pc")) {
+          parseFinancialSheet(
+            workbook.Sheets["financial_pc"],
+            storage.financialPC,
+            "Consolidated"
+          );
+        }
+
+        // financial_data → template format (single-company)
+        if (workbook.SheetNames.includes("financial_data")) {
+          const ws = workbook.Sheets["financial_data"];
+          const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][];
+
+          const templateTicker =
+            rawData[3] && rawData[3][1] != null ? String(rawData[3][1]).trim() : "";
+          const templateCompanyName =
+            rawData[2] && rawData[2][1] != null ? String(rawData[2][1]).trim() : "";
+          const templateIndustry =
+            rawData[4] && rawData[4][1] != null ? String(rawData[4][1]).trim() : "";
+
+          if (templateTicker) {
+            const headerRow: any[] = rawData[6] || [];
+            const yearCols: { year: string; colIdx: number }[] = [];
+            for (let c = 2; c < headerRow.length; c++) {
+              const cellVal = headerRow[c];
+              if (cellVal != null && String(cellVal).trim() !== "") {
+                yearCols.push({ year: String(cellVal).trim(), colIdx: c });
               }
             }
+
+            const tk = `${templateTicker} - Parent`;
+            if (!storage.financialFull[tk]) storage.financialFull[tk] = {};
+            for (const { year } of yearCols) {
+              if (!storage.financialFull[tk][year]) storage.financialFull[tk][year] = {};
+            }
+
+            for (let r = 7; r < rawData.length; r++) {
+              const row = rawData[r];
+              if (!row) continue;
+              const key = row[0] != null ? String(row[0]).trim() : "";
+              if (!key) continue;
+              for (const { year, colIdx } of yearCols) {
+                const val = row[colIdx];
+                if (val !== null && val !== undefined && val !== "") {
+                  storage.financialFull[tk][year][key] = val;
+                  addedFinancial++;
+                }
+              }
+            }
+
+            if (!storage.companyMap.has(templateTicker)) {
+              const newCompany = {
+                ma_ck: templateTicker,
+                name: templateCompanyName,
+                ten_tv: templateCompanyName,
+                san: "",
+                nganh_1: "",
+                nganh_2: templateIndustry,
+                nganh_3: "",
+                nganh_4: "",
+                loai_dn: "",
+                von_dieu_le: 0,
+              };
+              storage.companies.push(newCompany);
+              storage.companyMap.set(templateTicker, newCompany);
+              addedCompanies++;
+            }
           }
+        }
+
+        // general_data → company info
+        if (workbook.SheetNames.includes("general_data")) {
+          parseGeneralSheet(workbook.Sheets["general_data"]);
         }
       }
 
       // Clean up uploaded file
       fs.unlinkSync(req.file.path);
 
-      res.json({
-        success: true,
-        message: `Đã tải lên thành công. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu tài chính (bao gồm cả dữ liệu hợp nhất nếu có).`,
-      });
+      let message: string;
+      if (uploadType === "parent") {
+        message = `Đã tải lên thành công dữ liệu tài chính Công ty mẹ. Thêm ${addedFinancial} dòng dữ liệu.`;
+      } else if (uploadType === "consolidated") {
+        message = `Đã tải lên thành công dữ liệu tài chính Hợp nhất. Thêm ${addedFinancial} dòng dữ liệu.`;
+      } else if (uploadType === "general") {
+        message = `Đã tải lên thành công thông tin công ty. Thêm ${addedCompanies} công ty mới.`;
+      } else {
+        message = `Đã tải lên thành công. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu tài chính.`;
+      }
+
+      res.json({ success: true, message });
     } catch (error: any) {
       res.status(500).json({ error: `Lỗi xử lý file: ${error.message}` });
     }
