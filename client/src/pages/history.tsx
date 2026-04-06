@@ -263,7 +263,11 @@ export default function ReportHistory() {
                           className="prose prose-sm max-w-none text-sm text-foreground/90 overflow-y-auto max-h-[500px] bg-accent/20 rounded-lg p-4"
                           data-testid={`report-content-${report.id}`}
                         >
-                          <MarkdownContent content={report.content} />
+                          {report.content.includes('<') ? (
+                            <div dangerouslySetInnerHTML={{ __html: report.content }} className="prose prose-sm max-w-none" />
+                          ) : (
+                            <MarkdownContent content={report.content} />
+                          )}
                         </div>
                       </div>
                     )}

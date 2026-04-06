@@ -896,12 +896,13 @@ export default function Dashboard() {
         if (reports.tax) parts.push("# Báo cáo Phân tích Rủi ro Thuế\n\n" + reports.tax);
         const reportContent = parts.join("\n\n---\n\n") || data.content || JSON.stringify(data);
         setAiReportContent(reportContent);
-        // Auto-save AI report for editors/admins
+        // Auto-save AI report for editors/admins (save as HTML for rich rendering)
         if (canEdit && reportContent) {
+          const htmlContent = simpleMarkdownToHtml(reportContent);
           fetch(`${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/reports/save`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
-            body: JSON.stringify({ name: `${ticker} - AI Report - ${new Date().toLocaleDateString("vi-VN")}`, ticker, report_type: "ai", content: reportContent }),
+            body: JSON.stringify({ name: `${ticker} - AI Report - ${new Date().toLocaleDateString("vi-VN")}`, ticker, report_type: "ai", content: htmlContent }),
           }).catch(() => {});
         }
       }
@@ -1418,6 +1419,17 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
     }).filter(d => d.pctDiff !== null);
   }, [medianChartIndicators, medians]);
 
+  // Cap outliers at 300% and mark them
+  const OUTLIER_THRESHOLD = 300;
+  const cappedChartData = useMemo(() => {
+    return chartData.map(d => {
+      if (d.pctDiff !== null && Math.abs(d.pctDiff) > OUTLIER_THRESHOLD) {
+        return { ...d, pctDiff: d.pctDiff > 0 ? OUTLIER_THRESHOLD : -OUTLIER_THRESHOLD, isOutlier: true, originalPctDiff: d.pctDiff };
+      }
+      return { ...d, isOutlier: false, originalPctDiff: d.pctDiff };
+    });
+  }, [chartData]);
+
   return (
     <div className="space-y-6">
       {/* Year-over-year heatmap with median column */}
@@ -1522,7 +1534,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
       </Card>
 
       {/* Per-indicator diverging bar chart: % difference from median */}
-      {chartData.length > 0 && (
+      {cappedChartData.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1554,7 +1566,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
             <div className="h-[480px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={chartData}
+                  data={cappedChartData}
                   layout="vertical"
                   margin={{ left: 10, right: 40 }}
                   barCategoryGap="20%"
@@ -1562,6 +1574,7 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" horizontal={false} />
                   <XAxis
                     type="number"
+                    domain={[-300, 300]}
                     fontSize={10}
                     tickFormatter={(v) => `${v.toFixed(0)}%`}
                   />
@@ -1578,31 +1591,33 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
                       border: "1px solid hsl(214, 14%, 89%)",
                       fontSize: "12px",
                     }}
-                    formatter={(value: any, _name: string, props: any) => [
-                      typeof value === "number" ? `${value.toFixed(1)}%` : value,
-                      `${props.payload.fullName} vs trung vị`,
-                    ]}
+                    formatter={(value: any, _name: string, props: any) => {
+                      const payload = props.payload;
+                      const displayVal = payload.isOutlier
+                        ? `${(payload.originalPctDiff as number).toFixed(1)}% ▲ (hiển thị tối đa ±300%)`
+                        : typeof value === "number" ? `${value.toFixed(1)}%` : value;
+                      return [displayVal, `${payload.fullName} vs trung vị`];
+                    }}
                   />
                   <ReferenceLine x={0} stroke="hsl(215, 20%, 50%)" strokeWidth={1.5} />
-                  <Bar dataKey="pctDiff" name="% lệch trung vị" radius={[0, 2, 2, 0]} barSize={10}>
-                    {chartData.map((entry) => (
+                  <Bar dataKey="pctDiff" name="% lệch trung vị" radius={[0, 2, 2, 0]} barSize={12}>
+                    {cappedChartData.map((entry, index) => (
                       <Cell
-                        key={entry.id}
-                        fill={
-                          entry.risk === "red"
-                            ? "hsl(0, 72%, 48%)"
-                            : entry.risk === "yellow"
-                            ? "hsl(45, 90%, 45%)"
-                            : (entry.pctDiff ?? 0) >= 0
-                            ? "hsl(144, 55%, 40%)"
-                            : "hsl(215, 60%, 55%)"
-                        }
+                        key={index}
+                        fill={entry.isOutlier ? "hsl(280, 70%, 50%)" : (entry.pctDiff && entry.pctDiff >= 0 ? "hsl(144, 97%, 27%)" : "hsl(0, 72%, 48%)")}
+                        strokeDasharray={entry.isOutlier ? "3 2" : "0"}
+                        stroke={entry.isOutlier ? "hsl(280, 70%, 40%)" : "none"}
                       />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
+            {cappedChartData.some(d => d.isOutlier) && (
+              <p className="text-xs text-purple-500 mt-2">
+                * Chỉ số có dấu ▲ lệch quá 300% - giá trị thực được ghi chú trong tooltip
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1634,6 +1649,10 @@ function ChartsView({ result }: { result: AnalysisResult }) {
   const latestYear = target.years[0];
   const indicators = target.indicators[latestYear] || [];
   const [radarYears, setRadarYears] = useState<string[]>(target.years);
+  const [radarMode, setRadarMode] = useState<"group" | "indicator">("group");
+  const [radarHiddenGroups, setRadarHiddenGroups] = useState<Set<string>>(new Set());
+  const [trendHiddenGroups, setTrendHiddenGroups] = useState<Set<string>>(new Set());
+  const [trendHiddenInds, setTrendHiddenInds] = useState<Set<string>>(new Set());
 
   const riskDistribution = useMemo(() => {
     return target.years.map((year) => {
@@ -1679,25 +1698,19 @@ function ChartsView({ result }: { result: AnalysisResult }) {
   }, [radarYears, target]);
 
   const trendData = useMemo(() => {
-    const keyIds = ["0.1", "1.1", "1.5", "2.1", "2.5"];
-    return keyIds.map((id) => {
-      const indicator = indicators.find((i) => i.id === id);
-      const values = target.years
-        .map((year) => {
-          const yearInd = target.indicators[year]?.find((i) => i.id === id);
-          return {
-            year,
-            value: yearInd?.company_value ?? null,
-          };
-        })
-        .reverse();
-      return {
-        id,
-        name: indicator?.name || id,
-        values,
-      };
-    });
-  }, [target, indicators]);
+    const latestInds = target.indicators[latestYear] || [];
+    return latestInds
+      .filter(i => !trendHiddenGroups.has(i.group) && !trendHiddenInds.has(i.id))
+      .map(ind => ({
+        id: ind.id,
+        name: ind.name,
+        group: ind.group,
+        values: target.years.map(year => {
+          const yi = target.indicators[year]?.find(i => i.id === ind.id);
+          return { year, value: yi?.company_value ?? null };
+        }).reverse(),
+      }));
+  }, [target, latestYear, trendHiddenGroups, trendHiddenInds]);
 
   return (
     <div className="space-y-6">
@@ -1731,61 +1744,192 @@ function ChartsView({ result }: { result: AnalysisResult }) {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Radar + Trend side by side (full width) */}
+      <div className="space-y-6">
+        {/* Radar Chart */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <CardTitle className="text-base font-semibold">
                 Hồ sơ rủi ro - {target.company.ma_ck}
               </CardTitle>
-              <YearMultiSelect
-                allYears={target.years}
-                selectedYears={radarYears}
-                onChange={setRadarYears}
-              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex rounded-md overflow-hidden border border-border">
+                  <button
+                    className={`px-2 py-1 text-xs ${radarMode === "group" ? "bg-primary text-primary-foreground" : "bg-background text-foreground hover:bg-accent"}`}
+                    onClick={() => setRadarMode("group")}
+                  >
+                    Nhóm
+                  </button>
+                  <button
+                    className={`px-2 py-1 text-xs ${radarMode === "indicator" ? "bg-primary text-primary-foreground" : "bg-background text-foreground hover:bg-accent"}`}
+                    onClick={() => setRadarMode("indicator")}
+                  >
+                    Chỉ số
+                  </button>
+                </div>
+                <YearMultiSelect
+                  allYears={target.years}
+                  selectedYears={radarYears}
+                  onChange={setRadarYears}
+                />
+              </div>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               Điểm bình quân có trọng số theo năm ({radarYears.join(", ")})
             </p>
+            {/* Group toggles for indicator mode */}
+            {radarMode === "indicator" && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {Object.entries(GROUP_SHORT).map(([full, short]) => (
+                  <Button
+                    key={full}
+                    variant={radarHiddenGroups.has(full) ? "outline" : "default"}
+                    size="sm"
+                    className="h-6 text-xs"
+                    onClick={() => {
+                      setRadarHiddenGroups(prev => {
+                        const next = new Set(prev);
+                        if (next.has(full)) next.delete(full);
+                        else next.add(full);
+                        return next;
+                      });
+                    }}
+                  >
+                    {short}
+                  </Button>
+                ))}
+              </div>
+            )}
           </CardHeader>
           <CardContent>
-            <div className="h-64">
+            <div className="h-96">
               <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarData}>
-                  <PolarGrid stroke="hsl(214, 10%, 85%)" />
-                  <PolarAngleAxis
-                    dataKey="group"
-                    fontSize={10}
-                    tick={{ fill: "hsl(215, 10%, 45%)" }}
-                  />
-                  <PolarRadiusAxis
-                    angle={90}
-                    domain={[0, 100]}
-                    fontSize={10}
-                    tick={{ fill: "hsl(215, 10%, 45%)" }}
-                  />
-                  <Radar
-                    name="Điểm rủi ro"
-                    dataKey="score"
-                    stroke="hsl(144, 97%, 27%)"
-                    fill="hsl(144, 97%, 27%)"
-                    fillOpacity={0.2}
-                    strokeWidth={2}
-                  />
-                </RadarChart>
+                {radarMode === "group" ? (
+                  <RadarChart data={radarData}>
+                    <PolarGrid stroke="hsl(214, 10%, 85%)" />
+                    <PolarAngleAxis
+                      dataKey="group"
+                      fontSize={10}
+                      tick={{ fill: "hsl(215, 10%, 45%)" }}
+                    />
+                    <PolarRadiusAxis
+                      angle={90}
+                      domain={[0, 100]}
+                      fontSize={10}
+                      tick={{ fill: "hsl(215, 10%, 45%)" }}
+                    />
+                    <Radar
+                      name="Điểm rủi ro"
+                      dataKey="score"
+                      stroke="hsl(144, 97%, 27%)"
+                      fill="hsl(144, 97%, 27%)"
+                      fillOpacity={0.2}
+                      strokeWidth={2}
+                    />
+                    <RechartsTooltip
+                      contentStyle={{
+                        borderRadius: "8px",
+                        border: "1px solid hsl(214, 14%, 89%)",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </RadarChart>
+                ) : (
+                  <BarChart
+                    data={indicators
+                      .filter(i => !radarHiddenGroups.has(i.group))
+                      .map(i => ({
+                        name: i.id + " " + (i.name.length > 20 ? i.name.substring(0, 18) + "..." : i.name),
+                        fullName: i.name,
+                        group: GROUP_SHORT[i.group] || i.group,
+                        score: i.risk_level === "red" ? 100 : i.risk_level === "yellow" ? 50 : i.risk_level === "green" ? 10 : 0,
+                        fill: i.risk_level === "red" ? "hsl(0,72%,48%)" : i.risk_level === "yellow" ? "hsl(45,90%,45%)" : i.risk_level === "green" ? "hsl(144,55%,40%)" : "hsl(214,10%,70%)",
+                      }))}
+                    layout="vertical"
+                    margin={{ left: 10, right: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} fontSize={10} tickFormatter={v => `${v}`} />
+                    <YAxis type="category" dataKey="name" width={130} fontSize={8} tick={{ fill: "hsl(215,10%,45%)" }} />
+                    <RechartsTooltip
+                      contentStyle={{ borderRadius: "8px", border: "1px solid hsl(214,14%,89%)", fontSize: "11px" }}
+                      formatter={(value: any, _name: string, props: any) => [
+                        `${props.payload.score === 100 ? "Cao" : props.payload.score === 50 ? "Trung bình" : props.payload.score === 10 ? "An toàn" : "N/A"}`,
+                        props.payload.fullName,
+                      ]}
+                    />
+                    <Bar dataKey="score" barSize={10} radius={[0, 2, 2, 0]}>
+                      {indicators
+                        .filter(i => !radarHiddenGroups.has(i.group))
+                        .map((i, idx) => (
+                          <Cell key={idx} fill={i.risk_level === "red" ? "hsl(0,72%,48%)" : i.risk_level === "yellow" ? "hsl(45,90%,45%)" : i.risk_level === "green" ? "hsl(144,55%,40%)" : "hsl(214,10%,70%)"} />
+                        ))}
+                    </Bar>
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
 
+        {/* Trend Chart */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">
-              Xu hướng chỉ số chính
+              Xu hướng chỉ số
             </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Hiển thị tất cả chỉ số — bấm nhóm để ẩn/hiện
+            </p>
+            {/* Group filter toggles */}
+            <div className="flex flex-wrap gap-1 mt-2">
+              {Object.entries(GROUP_SHORT).map(([full, short]) => (
+                <Button
+                  key={full}
+                  variant={trendHiddenGroups.has(full) ? "outline" : "default"}
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={() => {
+                    setTrendHiddenGroups(prev => {
+                      const next = new Set(prev);
+                      if (next.has(full)) next.delete(full);
+                      else next.add(full);
+                      return next;
+                    });
+                  }}
+                >
+                  {short}
+                </Button>
+              ))}
+            </div>
+            {/* Individual indicator toggles */}
+            {trendData.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {(target.indicators[latestYear] || [])
+                  .filter(i => !trendHiddenGroups.has(i.group))
+                  .map(ind => (
+                    <button
+                      key={ind.id}
+                      className={`px-1.5 py-0.5 text-[10px] rounded border transition-opacity ${trendHiddenInds.has(ind.id) ? "opacity-40 border-border bg-background" : "border-primary/40 bg-primary/10"}`}
+                      onClick={() => {
+                        setTrendHiddenInds(prev => {
+                          const next = new Set(prev);
+                          if (next.has(ind.id)) next.delete(ind.id);
+                          else next.add(ind.id);
+                          return next;
+                        });
+                      }}
+                      title={ind.name}
+                    >
+                      {ind.id}
+                    </button>
+                  ))}
+              </div>
+            )}
           </CardHeader>
           <CardContent>
-            <div className="h-64">
+            <div className="h-[500px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 85%)" />
@@ -1803,26 +1947,32 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                     }}
                   />
                   <Legend iconSize={10} wrapperStyle={{ fontSize: "11px" }} />
-                  {trendData.map((trend, i) => (
-                    <Line
-                      key={trend.id}
-                      data={trend.values.filter((v) => v.value !== null)}
-                      type="monotone"
-                      dataKey="value"
-                      name={trend.name}
-                      stroke={
-                        [
-                          "hsl(144, 97%, 27%)",
-                          "hsl(25, 90%, 50%)",
-                          "hsl(142, 55%, 40%)",
-                          "hsl(262, 55%, 50%)",
-                          "hsl(45, 90%, 50%)",
-                        ][i]
-                      }
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                    />
-                  ))}
+                  {trendData.map((trend, i) => {
+                    const palette = [
+                      "hsl(144, 97%, 27%)",
+                      "hsl(25, 90%, 50%)",
+                      "hsl(262, 55%, 50%)",
+                      "hsl(45, 90%, 45%)",
+                      "hsl(200, 80%, 45%)",
+                      "hsl(320, 60%, 50%)",
+                      "hsl(170, 70%, 35%)",
+                      "hsl(0, 72%, 48%)",
+                      "hsl(60, 80%, 40%)",
+                      "hsl(240, 60%, 55%)",
+                    ];
+                    return (
+                      <Line
+                        key={trend.id}
+                        data={trend.values.filter((v) => v.value !== null)}
+                        type="monotone"
+                        dataKey="value"
+                        name={trend.id + " " + trend.name}
+                        stroke={palette[i % palette.length]}
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    );
+                  })}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -2497,13 +2647,25 @@ function calculateDeviation(indicator: TiraIndicator): { rr1Dev: number; rr2Dev:
   let rr2Dev = 0;
   let rr2Explain = "An toàn: trong khoảng phân vị ngành";
 
-  // RR1: deviation from threshold, normalized 0-1
+  // RR1: continuous distance-based deviation (0 = safe, 1 = very risky)
   if (indicator.risk_level_1 === "red" && indicator.company_value !== null) {
-    // Use severity as proxy for deviation magnitude
-    const sev = calcRiskSeverity("red", indicator.company_value, indicator.industry_median, indicator.industry_p_low, indicator.industry_p_high);
-    rr1Dev = Math.min(sev / 5, 1); // normalize 0-1
-    const sevLabels = ["", "nhẹ", "vừa", "đáng kể", "cao", "rất cao"];
-    rr1Explain = `Rủi ro: vượt ngưỡng CQT, mức độ ${sevLabels[sev] || ""} (severity ${sev}/5)`;
+    const median = indicator.industry_median;
+    const pLow = indicator.industry_p_low;
+    const pHigh = indicator.industry_p_high;
+    if (median !== null && pLow !== null && pHigh !== null) {
+      const iqr = Math.abs(pHigh - pLow);
+      const approxStdDev = iqr > 0 ? iqr / 1.35 : Math.abs(median || 1) * 0.2;
+      let dist = 0;
+      if (indicator.company_value < pLow) dist = Math.abs(pLow - indicator.company_value);
+      else if (indicator.company_value > pHigh) dist = Math.abs(indicator.company_value - pHigh);
+      const stdDevs = approxStdDev > 0 ? dist / approxStdDev : 0;
+      rr1Dev = Math.min(stdDevs / 3, 1); // 0 to 1, max at 3 std devs
+      if (rr1Dev === 0) rr1Dev = 0.2; // minimum non-zero for red flags
+      rr1Explain = `Rủi ro: vượt ngưỡng ${stdDevs.toFixed(1)} std dev khỏi IQR`;
+    } else {
+      rr1Dev = 0.5; // default moderate when IQR unavailable
+      rr1Explain = "Rủi ro: vượt ngưỡng CQT (IQR không xác định)";
+    }
   }
 
   // RR2: distance from median/IQR in standard deviation units
@@ -2695,32 +2857,38 @@ function RiskHeatmapView({ result }: { result: AnalysisResult }) {
                                     >
                                       {fmtVal(indId, ind.company_value)}
                                     </div>
-                                    {/* Dual bar */}
-                                    <div className="flex h-2 rounded overflow-hidden w-full gap-px">
-                                      {/* Left bar = RR1 (orange) */}
+                                    {/* Dual bar: width reflects actual deviation magnitude */}
+                                    <div className="relative h-2 w-full rounded overflow-hidden bg-muted/30">
+                                      {/* Left bar = RR1 (orange): width proportional to rr1Dev */}
                                       <div
-                                        className="w-1/2 rounded-l"
+                                        className="absolute left-0 top-0 h-full rounded-l"
                                         style={{
+                                          width: `${Math.max(rr1Dev * 100, rr1Dev > 0 ? 10 : 0)}%`,
                                           background:
                                             rr1Alpha > 0
                                               ? `hsl(25, 90%, ${Math.max(45, 90 - rr1Alpha * 0.4)}%)`
-                                              : "hsl(214, 10%, 88%)",
-                                          opacity: rr1Alpha > 0 ? 1 : 0.4,
+                                              : "transparent",
+                                          opacity: rr1Alpha > 0 ? 1 : 0,
                                         }}
-                                        title={`RR1: ${rr1Dev > 0 ? "Rủi ro" : "An toàn"}`}
+                                        title={`RR1: ${rr1Dev > 0 ? "Rủi ro" : "An toàn"} (${(rr1Dev * 100).toFixed(0)}%)`}
                                       />
-                                      {/* Right bar = RR2 (red) */}
+                                      {/* Right bar = RR2 (red): width proportional to rr2Dev, right-aligned */}
                                       <div
-                                        className="w-1/2 rounded-r"
+                                        className="absolute right-0 top-0 h-full rounded-r"
                                         style={{
+                                          width: `${Math.max(rr2Dev * 100, rr2Dev > 0.1 ? 10 : 0)}%`,
                                           background:
-                                            rr2Alpha > 20
+                                            rr2Alpha > 10
                                               ? `hsl(0, 72%, ${Math.max(40, 90 - rr2Alpha * 0.5)}%)`
-                                              : "hsl(214, 10%, 88%)",
-                                          opacity: rr2Alpha > 20 ? 1 : 0.4,
+                                              : "transparent",
+                                          opacity: rr2Alpha > 10 ? 1 : 0,
                                         }}
-                                        title={`RR2: ${rr2Dev > 0.3 ? "Lệch IQR" : "Trong IQR"}`}
+                                        title={`RR2: ${rr2Dev > 0.3 ? "Lệch IQR" : "Trong IQR"} (${(rr2Dev * 100).toFixed(0)}%)`}
                                       />
+                                      {/* Background track when both are safe */}
+                                      {rr1Dev === 0 && rr2Dev <= 0.1 && (
+                                        <div className="absolute inset-0 rounded" style={{ background: "hsl(142, 55%, 85%)" }} />
+                                      )}
                                     </div>
                                   </div>
                                 </TooltipTrigger>
