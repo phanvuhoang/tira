@@ -636,19 +636,48 @@ export default function Dashboard() {
 
   const summaryStats = useMemo(() => {
     if (!result) return null;
-    const latestYear = result.target.years[0];
-    const indicators = result.target.indicators[latestYear] || [];
-    const reds = indicators.filter((i) => i.risk_level === "red").length;
-    const yellows = indicators.filter((i) => i.risk_level === "yellow").length;
-    const greens = indicators.filter((i) => i.risk_level === "green").length;
-    const grays = indicators.filter((i) => i.risk_level === "gray").length;
-    const total = indicators.length;
-    const riskScore = total > 0 ? ((reds * 3 + yellows * 1) / (total * 3)) * 100 : 0;
-    // Dual risk counts
-    const risk1Reds = indicators.filter((i) => (i.risk_level_1 ?? i.risk_level) === "red").length;
-    const risk2Reds = indicators.filter((i) => (i.risk_level_2 ?? i.risk_level) === "red").length;
-    return { reds, yellows, greens, grays, total, riskScore, latestYear, risk1Reds, risk2Reds };
-  }, [result]);
+    const allYears = result.target.years;
+
+    // Calculate per-year scores
+    const yearScores = allYears.map((year) => {
+      const indicators = result.target.indicators[year] || [];
+      const score = calcCompositeScore(indicators, customWeights);
+      return { year, score };
+    });
+
+    // Weighted average: nearest year (index 0) gets highest weight
+    const n = yearScores.length;
+    let totalW = 0, totalWS = 0;
+    yearScores.forEach((ys, idx) => {
+      const recencyWeight = n - idx; // first year (newest) gets n, last gets 1
+      totalW += recencyWeight;
+      totalWS += ys.score * recencyWeight;
+    });
+    const avgScore = totalW > 0 ? Math.round(totalWS / totalW) : 0;
+
+    // Count risks across ALL years
+    let totalReds1 = 0, totalReds2 = 0, totalGreens = 0, totalGrays = 0;
+    for (const year of allYears) {
+      const inds = result.target.indicators[year] || [];
+      for (const i of inds) {
+        if ((i as any).risk_level_1 === "red") totalReds1++;
+        if ((i as any).risk_level_2 === "red") totalReds2++;
+        if (i.risk_level === "green" || (i as any).risk_level_1 === "green") totalGreens++;
+        if (i.risk_level === "gray") totalGrays++;
+      }
+    }
+
+    const firstYearInds = result.target.indicators[allYears[0]] || [];
+    return {
+      risk1Reds: totalReds1, risk2Reds: totalReds2,
+      reds: totalReds1 + totalReds2, greens: totalGreens, grays: totalGrays,
+      yellows: 0,
+      total: allYears.length * firstYearInds.length,
+      riskScore: avgScore,
+      yearScores,
+      allYears,
+    };
+  }, [result, customWeights]);
 
   // Export handler
   const handleExport = useCallback(async () => {
@@ -1171,7 +1200,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2">
                 <Info className="w-4 h-4 text-primary" />
                 <span className="text-xs font-medium text-muted-foreground">
-                  Điểm rủi ro
+                  Điểm rủi ro (BQ)
                 </span>
               </div>
               <p className="text-2xl font-bold tabular-nums mt-1" data-testid="text-risk-score">
@@ -2621,35 +2650,40 @@ function CompositeScoreExplanation({
   weights: Record<string, number>;
 }) {
   const { target } = result;
-  const latestYear = target.years[0];
-  const indicators = target.indicators[latestYear] || [];
+  const allYears = target.years;
+  const [selectedYear, setSelectedYear] = useState<string>(allYears[0] || "");
+
+  const indicators = target.indicators[selectedYear] || [];
 
   const rows = indicators.map((ind) => {
-    const w = weights[ind.id] ?? 3;
-    const r1 = (ind as any).risk_level_1 || ind.risk_level;
+    const w = weights[ind.id] ?? 5;
+    const r1 = (ind as any).risk_level_1 || ind.risk_level || "gray";
     const r2 = (ind as any).risk_level_2 || "gray";
-    const rr1Score = r1 === "red" ? 2 : 0;
-    const rr2Score = r2 === "red" ? 2 : 0;
-    const totalScore = rr1Score + rr2Score;
-    const weightedContrib = totalScore * w;
-    const maxContrib = 4 * w;
-    return { ind, w, rr1Score, rr2Score, totalScore, weightedContrib, maxContrib };
+    const sev1 = calcRiskSeverity(r1, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
+    const sev2 = calcRiskSeverity(r2, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
+    const totalSev = sev1 + sev2;
+    const weightedContrib = totalSev * w;
+    const maxContrib = 10 * w;
+    return { ind, w, r1, r2, sev1, sev2, totalSev, weightedContrib, maxContrib };
   });
 
   const totalWeightedRisk = rows.reduce((sum, r) => sum + r.weightedContrib, 0);
   const totalWeightedMax = rows.reduce((sum, r) => sum + r.maxContrib, 0);
   const compositeScore = totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
 
-  const scoreColor =
-    compositeScore >= 60
-      ? "hsl(0, 72%, 48%)"
-      : compositeScore >= 35
-      ? "hsl(45, 90%, 45%)"
-      : "hsl(142, 55%, 40%)";
+  // Per-year scores
+  const yearScores = allYears.map((year, idx) => {
+    const inds = target.indicators[year] || [];
+    const score = calcCompositeScore(inds, weights);
+    const n = allYears.length;
+    const recencyWeight = n - idx;
+    return { year, score, recencyWeight };
+  });
+  const totalW = yearScores.reduce((s, ys) => s + ys.recencyWeight, 0);
+  const avgScore = totalW > 0 ? Math.round(yearScores.reduce((s, ys) => s + ys.score * ys.recencyWeight, 0) / totalW) : 0;
 
-  const WEIGHT_LABELS: Record<number, string> = {
-    1: "Rất thấp", 2: "Thấp", 3: "Trung bình", 4: "Cao", 5: "Rất cao",
-  };
+  const scoreColor = (s: number) =>
+    s >= 60 ? "hsl(0, 72%, 48%)" : s >= 35 ? "hsl(45, 90%, 45%)" : "hsl(142, 55%, 40%)";
 
   return (
     <div className="space-y-6">
@@ -2663,102 +2697,151 @@ function CompositeScoreExplanation({
           {/* Formula */}
           <div className="rounded-xl p-4 border" style={{ background: "hsl(214, 10%, 97%)", borderColor: "hsl(144, 97%, 27%)" }}>
             <p className="text-sm font-bold mb-2" style={{ color: "hsl(144, 77%, 35%)" }}>Công thức:</p>
-            <p className="text-sm font-mono">Điểm = Σ(Điểm rủi ro × Trọng số) / Σ(Điểm tối đa × Trọng số) × 100</p>
+            <p className="text-sm font-mono">Điểm = Σ(Mức độ rủi ro × Trọng số) / Σ(10 × Trọng số) × 100</p>
             <div className="mt-3 text-xs text-muted-foreground space-y-1">
-              <p>• Mỗi chỉ số có điểm rủi ro tối đa = 4 (2 cho RR1 + 2 cho RR2)</p>
-              <p>• Trọng số từ 1 (ít quan trọng) đến 5 (rất quan trọng)</p>
-              <p>• Nếu RR1 = "Rủi ro" (ngưỡng CQT vi phạm): +2 điểm</p>
-              <p>• Nếu RR2 = "Rủi ro" (ngoài IQR ngành): +2 điểm</p>
+              <p>• Mỗi chỉ số có mức độ rủi ro tối đa = 10 (5 cho RR1 + 5 cho RR2)</p>
+              <p>• Mức độ rủi ro (0-5): 0 = an toàn, 1-2 = nhẹ, 3 = trung bình, 4-5 = cao</p>
+              <p>• Trọng số từ 1 (ít quan trọng) đến 10 (rất quan trọng)</p>
+              <p>• Điểm BQ = Trung bình có trọng số theo năm (năm gần nhất = trọng số cao nhất)</p>
             </div>
           </div>
 
-          {/* Final score */}
-          <div className="flex items-center gap-4 p-4 rounded-xl border" style={{ borderColor: `${scoreColor}40` }}>
-            <div className="text-4xl font-bold tabular-nums" style={{ color: scoreColor }}>{compositeScore}</div>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: scoreColor }}>Điểm rủi ro: {compositeScore}/100</p>
-              <p className="text-xs text-muted-foreground">
-                = ({totalWeightedRisk} / {totalWeightedMax}) × 100
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {compositeScore >= 60 ? "Rủi ro cao – cần kiểm tra ngạy" : compositeScore >= 35 ? "Rủi ro trung bình – theo dõi chặt chẽ" : "Rủi ro thấp – tương đối an toàn"}
-              </p>
-            </div>
-          </div>
-
-          {/* Detailed table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr style={{ background: "hsl(214, 10%, 95%)" }}>
-                  <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
-                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
-                  <th className="text-center px-3 py-2 font-semibold border-b border-border">RR1 (0/2)</th>
-                  <th className="text-center px-3 py-2 font-semibold border-b border-border">RR2 (0/2)</th>
-                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Tổng điểm</th>
-                  <th className="text-center px-3 py-2 font-semibold border-b border-border">Đóng góp có trọng số</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ ind, w, rr1Score, rr2Score, totalScore, weightedContrib, maxContrib }) => (
-                  <tr
-                    key={ind.id}
-                    className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+          {/* Per-year scores */}
+          <div>
+            <p className="text-sm font-semibold mb-2">Theo từng năm:</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {yearScores.map(({ year, score, recencyWeight }) => {
+                const sc = scoreColor(score);
+                return (
+                  <button
+                    key={year}
+                    onClick={() => setSelectedYear(year)}
+                    className="px-3 py-2 rounded-lg border text-xs font-medium transition-all"
                     style={{
-                      background: totalScore === 4 ? "hsl(0, 72%, 98%)" : totalScore > 0 ? "hsl(25, 100%, 98%)" : undefined,
+                      background: selectedYear === year ? "hsl(144, 50%, 8%)" : "hsl(214, 10%, 97%)",
+                      borderColor: selectedYear === year ? "hsl(144, 97%, 27%)" : `${sc}40`,
+                      color: selectedYear === year ? "hsl(144, 77%, 50%)" : sc,
                     }}
                   >
-                    <td className="px-3 py-2">
-                      <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
-                      <span>{ind.name}</span>
-                    </td>
-                    <td className="text-center px-3 py-2">
-                      <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>
-                        {w} – {WEIGHT_LABELS[w]}
-                      </span>
-                    </td>
-                    <td className="text-center px-3 py-2">
-                      <span style={{ color: rr1Score > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                        {rr1Score}
-                      </span>
-                    </td>
-                    <td className="text-center px-3 py-2">
-                      <span style={{ color: rr2Score > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                        {rr2Score}
-                      </span>
-                    </td>
-                    <td className="text-center px-3 py-2 font-semibold">
-                      <span style={{ color: totalScore === 4 ? "hsl(0, 72%, 45%)" : totalScore > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
-                        {totalScore}
-                      </span>
-                    </td>
-                    <td className="text-center px-3 py-2">
-                      <span className="font-mono">{weightedContrib} / {maxContrib}</span>
+                    <span className="font-mono">{year}</span>
+                    <span className="ml-2 font-bold">{score}/100</span>
+                    <span className="ml-1 text-muted-foreground">(w={recencyWeight})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Weighted average */}
+            <div className="flex items-center gap-4 p-4 rounded-xl border" style={{ borderColor: `${scoreColor(avgScore)}40` }}>
+              <div className="text-4xl font-bold tabular-nums" style={{ color: scoreColor(avgScore) }}>{avgScore}</div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: scoreColor(avgScore) }}>Điểm rủi ro BQ: {avgScore}/100</p>
+                <p className="text-xs text-muted-foreground">
+                  Trung bình có trọng số theo từng năm (năm gần nhất = trọng số cao nhất)
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {avgScore >= 60 ? "Rủi ro cao – cần kiểm tra ngay" : avgScore >= 35 ? "Rủi ro trung bình – theo dõi chặt chẽ" : "Rủi ro thấp – tương đối an toàn"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Year selector for detail table */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold">Chi tiết chỉ số năm {selectedYear}:</p>
+              <Select value={selectedYear} onValueChange={setSelectedYear}>
+                <SelectTrigger className="w-28 h-7 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {allYears.map((y) => (
+                    <SelectItem key={y} value={y}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Score for selected year */}
+            <p className="text-xs text-muted-foreground mb-2">
+              Điểm năm {selectedYear}: <strong style={{ color: scoreColor(compositeScore) }}>{compositeScore}/100</strong>
+            </p>
+
+            {/* Detailed table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr style={{ background: "hsl(214, 10%, 95%)" }}>
+                    <th className="text-left px-3 py-2 font-semibold border-b border-border">Chỉ số</th>
+                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Trọng số</th>
+                    <th className="text-center px-3 py-2 font-semibold border-b border-border">RR1 Mức độ (0-5)</th>
+                    <th className="text-center px-3 py-2 font-semibold border-b border-border">RR2 Mức độ (0-5)</th>
+                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Tổng (0-10)</th>
+                    <th className="text-center px-3 py-2 font-semibold border-b border-border">Đóng góp có trọng số</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ ind, w, r1, r2, sev1, sev2, totalSev, weightedContrib, maxContrib }) => (
+                    <tr
+                      key={ind.id}
+                      className="border-b border-border/50 hover:bg-accent/30 transition-colors"
+                      style={{
+                        background: totalSev >= 8 ? "hsl(0, 72%, 98%)" : totalSev > 0 ? "hsl(25, 100%, 98%)" : undefined,
+                      }}
+                    >
+                      <td className="px-3 py-2">
+                        <span className="font-mono text-[10px] text-muted-foreground mr-1.5">{ind.id}</span>
+                        <span>{ind.name}</span>
+                      </td>
+                      <td className="text-center px-3 py-2">
+                        <span className="font-semibold" style={{ color: WEIGHT_COLORS_SCORING[w] }}>
+                          {w} – {WEIGHT_LABELS_SCORING[w]}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-2">
+                        <span style={{ color: sev1 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                          {sev1} {r1 === "red" ? "⚠️" : r1 === "green" ? "✅" : ""}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-2">
+                        <span style={{ color: sev2 > 0 ? "hsl(0, 72%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                          {sev2} {r2 === "red" ? "⚠️" : r2 === "green" ? "✅" : ""}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-2 font-semibold">
+                        <span style={{ color: totalSev >= 8 ? "hsl(0, 72%, 45%)" : totalSev > 0 ? "hsl(25, 90%, 45%)" : "hsl(142, 55%, 40%)" }}>
+                          {totalSev}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-2">
+                        <span className="font-mono">{weightedContrib} / {maxContrib}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: "hsl(214, 10%, 93%)" }}>
+                    <td className="px-3 py-2 font-bold" colSpan={5}>Tổng cộng</td>
+                    <td className="text-center px-3 py-2 font-bold">
+                      {totalWeightedRisk} / {totalWeightedMax}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{ background: "hsl(214, 10%, 93%)" }}>
-                  <td className="px-3 py-2 font-bold" colSpan={5}>Tổng cộng</td>
-                  <td className="text-center px-3 py-2 font-bold">
-                    {totalWeightedRisk} / {totalWeightedMax}
-                  </td>
-                </tr>
-                <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
-                  <td className="px-3 py-2 font-bold" colSpan={5}>Điểm rủi ro tổng hợp</td>
-                  <td className="text-center px-3 py-2 font-bold text-lg">
-                    {compositeScore} / 100
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                  <tr style={{ background: "hsl(144, 50%, 8%)", color: "hsl(144, 77%, 50%)" }}>
+                    <td className="px-3 py-2 font-bold" colSpan={5}>Điểm rủi ro năm {selectedYear}</td>
+                    <td className="text-center px-3 py-2 font-bold text-lg">
+                      {compositeScore} / 100
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </CardContent>
       </Card>
     </div>
   );
 }
+
 
 function RiskDiagramView({
   result,
@@ -2769,9 +2852,9 @@ function RiskDiagramView({
 }) {
   const { target } = result;
   const allYears = target.years;
-  const [selectedYear, setSelectedYear] = useState<string>("avg");
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
+  const [filterMode, setFilterMode] = useState<"both" | "rr1only" | "rr2only" | "all">("all");
 
   const DIAGRAM_GROUPS = [
     "CRITICAL RED LINES",
@@ -2789,106 +2872,96 @@ function RiskDiagramView({
     });
   }
 
-  // Build indicator list for the selected year or average
-  const indicators = useMemo(() => {
-    if (selectedYear !== "avg") {
-      return target.indicators[selectedYear] || [];
-    }
-    // Average across all years: pick first year's list as base, average values
+  // Build base indicator list from first year
+  const baseIndicators = useMemo(() => {
     const firstYear = allYears[0];
     if (!firstYear) return [];
-    const base = target.indicators[firstYear] || [];
-    return base.map((baseInd) => {
-      // For averaging, we use the risk levels of the most recent year (first)
-      return baseInd;
-    });
-  }, [selectedYear, target, allYears]);
+    return target.indicators[firstYear] || [];
+  }, [target, allYears]);
 
-  // Build diagram data
+  // Build diagram data: Probability x Impact
   const diagramData = useMemo(() => {
-    return indicators
+    const n = allYears.length;
+    return baseIndicators
       .filter((ind) => !hiddenIds.has(ind.id) && !hiddenGroups.has(ind.group))
       .map((ind) => {
-        const w = weights[ind.id] ?? 3;
+        const w = weights[ind.id] ?? 5;
 
-        const r1 = ind.risk_level_1 || ind.risk_level;
-        const r2 = ind.risk_level_2 || "gray";
+        // Calculate probability: recency-weighted frequency of risk across years
+        let probNumerator = 0;
+        let probDenominator = 0;
+        let hasRR1 = false;
+        let hasRR2 = false;
 
-        // X: RR1 risk deviation (0 = safe, positive = risky)
-        // Simplified: red = 1 (has threshold risk), green = 0 (safe), gray = 0.1 (unknown)
-        let x = 0;
-        if (r1 === "red") x = 1;
-        else if (r1 === "gray") x = 0.1;
-        // else green = 0
+        allYears.forEach((year, idx) => {
+          const recencyW = n - idx; // newest year = n, oldest = 1
+          probDenominator += recencyW;
+          const yearInd = (target.indicators[year] || []).find((i) => i.id === ind.id);
+          if (!yearInd) return;
+          const r1 = (yearInd as any).risk_level_1 || yearInd.risk_level || "gray";
+          const r2 = (yearInd as any).risk_level_2 || "gray";
+          const isRisky = r1 === "red" || r2 === "red" ? 1 : 0;
+          if (r1 === "red") hasRR1 = true;
+          if (r2 === "red") hasRR2 = true;
+          probNumerator += isRisky * recencyW;
+        });
 
-        // Y: RR2 risk deviation from IQR (0 = within IQR, positive = outside IQR)
-        let y = 0;
-        if (r2 === "red") {
-          if (
-            ind.company_value !== null &&
-            ind.industry_p_low !== null &&
-            ind.industry_p_high !== null
-          ) {
-            const iqr = Math.abs(ind.industry_p_high - ind.industry_p_low);
-            if (iqr > 0) {
-              if (ind.company_value < ind.industry_p_low) {
-                y = Math.min((ind.industry_p_low - ind.company_value) / iqr, 2);
-              } else if (ind.company_value > ind.industry_p_high) {
-                y = Math.min((ind.company_value - ind.industry_p_high) / iqr, 2);
-              } else {
-                y = 0.5; // within IQR but flagged red - small positive
-              }
-            } else {
-              y = 1;
-            }
-          } else {
-            y = 1;
-          }
-        } else if (r2 === "gray") {
-          y = 0.1;
-        }
-        // else green = 0
+        const probability = probDenominator > 0 ? probNumerator / probDenominator : 0;
 
-        // Z: bubble size based on weight (5=most important=largest)
-        const z = w * 80;
+        // Impact: (sev1 + sev2) * weight / (10 * 10)
+        const latestInd = (target.indicators[allYears[0]] || []).find((i) => i.id === ind.id) || ind;
+        const r1Latest = (latestInd as any).risk_level_1 || latestInd.risk_level || "gray";
+        const r2Latest = (latestInd as any).risk_level_2 || "gray";
+        const sev1 = calcRiskSeverity(r1Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
+        const sev2 = calcRiskSeverity(r2Latest, latestInd.company_value, (latestInd as any).industry_median, (latestInd as any).industry_p_low, (latestInd as any).industry_p_high);
+        const impact = (sev1 + sev2) * w / (10 * 10);
 
-        // Color by quadrant:
-        // Top-right (both risky) = red
-        // Bottom-right (RR1 risky only) = orange
-        // Top-left (RR2 risky only) = yellow
-        // Bottom-left (low risk) = green
+        // Z: bubble size = weight importance (1-10)
+        const z = w * 50;
+
+        // Color: orange = only RR1, dark/black = only RR2, red = both
         let color = "hsl(142, 55%, 45%)";
-        if (r1 === "red" && r2 === "red") color = "hsl(0, 72%, 48%)";
-        else if (r1 === "red" && r2 !== "red") color = "hsl(25, 90%, 50%)";
-        else if (r1 !== "red" && r2 === "red") color = "hsl(45, 90%, 45%)";
+        if (hasRR1 && hasRR2) color = "hsl(0, 72%, 48%)";
+        else if (hasRR1 && !hasRR2) color = "hsl(25, 90%, 50%)";
+        else if (!hasRR1 && hasRR2) color = "hsl(215, 20%, 20%)";
 
         return {
           id: ind.id,
           name: ind.name,
-          x,
-          y,
+          x: probability,
+          y: impact,
           z,
-          risk1: r1,
-          risk2: r2,
-          value: ind.company_value,
+          risk1: r1Latest,
+          risk2: r2Latest,
+          value: latestInd.company_value,
           weight: w,
           color,
+          hasRR1,
+          hasRR2,
+          sev1,
+          sev2,
+          probability,
+          impact,
         };
+      })
+      .filter((d) => {
+        // Only show indicators where probability > 0 (has risk in at least one year)
+        if (filterMode === "all") return d.probability > 0;
+        if (filterMode === "rr1only") return d.hasRR1 && !d.hasRR2;
+        if (filterMode === "rr2only") return !d.hasRR1 && d.hasRR2;
+        if (filterMode === "both") return d.hasRR1 && d.hasRR2;
+        return d.probability > 0;
       });
-  }, [indicators, weights, hiddenIds, hiddenGroups]);
+  }, [baseIndicators, allYears, target, weights, hiddenIds, hiddenGroups, filterMode]);
 
   const allIndicatorIds = useMemo(() => {
-    const firstYear = allYears[0];
-    if (!firstYear) return [];
-    return (target.indicators[firstYear] || []).map((i) => ({ id: i.id, name: i.name, group: i.group }));
-  }, [target, allYears]);
+    return baseIndicators.map((i) => ({ id: i.id, name: i.name, group: i.group }));
+  }, [baseIndicators]);
 
   const allGroups = useMemo(() => {
-    const firstYear = allYears[0];
-    if (!firstYear) return DIAGRAM_GROUPS;
-    const groups = Array.from(new Set((target.indicators[firstYear] || []).map((i) => i.group)));
+    const groups = Array.from(new Set(baseIndicators.map((i) => i.group)));
     return groups.length > 0 ? groups : DIAGRAM_GROUPS;
-  }, [target, allYears]);
+  }, [baseIndicators]);
 
   function toggleHide(id: string) {
     setHiddenIds((prev) => {
@@ -2905,15 +2978,17 @@ function RiskDiagramView({
     const d = payload[0]?.payload;
     if (!d) return null;
     return (
-      <div className="bg-card border border-border rounded-lg p-3 text-xs shadow-lg max-w-[220px]">
+      <div className="bg-card border border-border rounded-lg p-3 text-xs shadow-lg max-w-[240px]">
         <p className="font-bold text-sm mb-1">{d.id} – {d.name}</p>
         <p>Giá trị: {d.value !== null && d.value !== undefined ? Number(d.value).toFixed(3) : "N/A"}</p>
-        <p>Trọng số: {d.weight} ({["Rất thấp", "Thấp", "Trung bình", "Cao", "Rất cao"][d.weight - 1]})</p>
+        <p>Trọng số: {d.weight} – {WEIGHT_LABELS_SCORING[d.weight] || ""}</p>
+        <p>Xác suất rủi ro: {(d.probability * 100).toFixed(0)}%</p>
+        <p>Mức độ tác động: {(d.impact * 100).toFixed(1)}%</p>
         <p style={{ color: d.risk1 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
-          RR1 (Ngưỡng CQT): {d.risk1 === "red" ? "Rủi ro" : d.risk1 === "green" ? "An toàn" : "Không xác định"}
+          RR1 (Ngưỡng CQT): {d.risk1 === "red" ? "⚠️ Rủi ro" : d.risk1 === "green" ? "✅ An toàn" : "Không xác định"} (Sev {d.sev1})
         </p>
         <p style={{ color: d.risk2 === "red" ? "hsl(0,72%,48%)" : "hsl(142,55%,40%)" }}>
-          RR2 (So sánh ngành): {d.risk2 === "red" ? "Rủi ro" : d.risk2 === "green" ? "An toàn" : "Không xác định"}
+          RR2 (Phân vị ngành): {d.risk2 === "red" ? "⚠️ Rủi ro" : d.risk2 === "green" ? "✅ An toàn" : "Không xác định"} (Sev {d.sev2})
         </p>
       </div>
     );
@@ -2942,25 +3017,35 @@ function RiskDiagramView({
             Risk Diagram – {target.company.ma_ck}
           </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Phân tích rủi ro theo 2 chiều: X = RR1 (ngưỡng CQT), Y = RR2 (lệch IQR ngành). Góc phải trên = rủi ro cao nhất. Kích thước bong bóng = trọng số chỉ số.
+            Chỉ hiển thị các chỉ số có rủi ro trong ít nhất 1 năm. X = Xác suất rủi ro (tần suất, có trọng số gần nhất). Y = Mức độ tác động (mức độ rủi ro × trọng số). Kích thước bong bóng = tầm quan trọng (trọng số 1-10).
           </p>
         </CardHeader>
         <CardContent>
-          {/* Controls */}
+          {/* Filter controls */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium">Năm:</label>
-              <Select value={selectedYear} onValueChange={setSelectedYear}>
-                <SelectTrigger className="w-28 h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="avg">Bình quân</SelectItem>
-                  {allYears.map((y) => (
-                    <SelectItem key={y} value={y}>{y}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-xs font-medium">Lọc:</label>
+              <div className="flex gap-1">
+                {([
+                  { key: "all", label: "Tất cả có rủi ro" },
+                  { key: "rr1only", label: "Chỉ RR1" },
+                  { key: "rr2only", label: "Chỉ RR2" },
+                  { key: "both", label: "Cả hai" },
+                ] as const).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setFilterMode(key)}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium border transition-all"
+                    style={{
+                      background: filterMode === key ? "hsl(144, 50%, 12%)" : "hsl(214, 10%, 97%)",
+                      borderColor: filterMode === key ? "hsl(144, 97%, 27%)" : "hsl(214, 10%, 80%)",
+                      color: filterMode === key ? "hsl(144, 77%, 50%)" : "hsl(215, 20%, 50%)",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -2989,69 +3074,88 @@ function RiskDiagramView({
             </div>
           </div>
 
-          {/* Legend for quadrants */}
-          <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
-            <div className="rounded-lg p-2 border" style={{ background: "hsl(142, 55%, 97%)", borderColor: "hsl(142, 55%, 85%)" }}>
-              <span className="font-semibold text-green-700">■</span> Góc trái dưới – Rủi ro thấp cả 2 chiều (an toàn)
+          {/* Color legend */}
+          <div className="flex flex-wrap gap-3 mb-4 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-4 rounded-full" style={{ background: "hsl(25, 90%, 50%)" }} />
+              <span>Chỉ có RR1 (vượt ngưỡng CQT)</span>
             </div>
-            <div className="rounded-lg p-2 border" style={{ background: "hsl(45, 90%, 97%)", borderColor: "hsl(45, 90%, 80%)" }}>
-              <span className="font-semibold" style={{ color: "hsl(45,90%,40%)" }}>■</span> Góc trái trên – Chỉ rủi ro RR2 (lệch IQR ngành)
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-4 rounded-full" style={{ background: "hsl(215, 20%, 20%)" }} />
+              <span>Chỉ có RR2 (ngoài phân vị ngành)</span>
             </div>
-            <div className="rounded-lg p-2 border" style={{ background: "hsl(25, 90%, 97%)", borderColor: "hsl(25, 90%, 80%)" }}>
-              <span className="font-semibold" style={{ color: "hsl(25,90%,45%)" }}>■</span> Góc phải dưới – Chỉ rủi ro RR1 (ngưỡng CQT)
-            </div>
-            <div className="rounded-lg p-2 border" style={{ background: "hsl(0, 72%, 97%)", borderColor: "hsl(0, 72%, 85%)" }}>
-              <span className="font-semibold text-red-600">■</span> Góc phải trên – Rủi ro cao cả 2 chiều (nguy hiểm)
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-4 rounded-full" style={{ background: "hsl(0, 72%, 48%)" }} />
+              <span>Có cả RR1 và RR2</span>
             </div>
           </div>
 
           {/* Chart */}
-          <ResponsiveContainer width="100%" height={420}>
-            <ScatterChart margin={{ top: 20, right: 30, bottom: 30, left: 30 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 90%)" />
-              <XAxis
-                type="number"
-                dataKey="x"
-                domain={[0, 1.5]}
-                tickCount={7}
-                label={{
-                  value: "Mức độ rủi ro RR1 (Ngưỡng CQT)",
-                  position: "insideBottom",
-                  offset: -15,
-                  fontSize: 11,
-                  fill: "hsl(215, 20%, 50%)",
-                }}
-                tick={{ fontSize: 10 }}
-              />
-              <YAxis
-                type="number"
-                dataKey="y"
-                domain={[0, 2.5]}
-                tickCount={6}
-                label={{
-                  value: "Mức độ rủi ro RR2 (Lệch IQR ngành)",
-                  angle: -90,
-                  position: "insideLeft",
-                  offset: 10,
-                  fontSize: 11,
-                  fill: "hsl(215, 20%, 50%)",
-                }}
-                tick={{ fontSize: 10 }}
-              />
-              <ZAxis type="number" dataKey="z" range={[40, 500]} />
-              <ReferenceLine x={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
-              <ReferenceLine y={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
-              <RechartsTooltip content={<CustomTooltip />} />
-              <Scatter
-                data={diagramData}
-                shape={<CustomDot />}
-              >
-                {diagramData.map((entry) => (
-                  <Cell key={entry.id} fill={entry.color} />
-                ))}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
+          {diagramData.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+              Không có chỉ số nào thỏa bộ lọc đã chọn.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={420}>
+              <ScatterChart margin={{ top: 20, right: 30, bottom: 40, left: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 10%, 90%)" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  domain={[0, 1]}
+                  tickCount={6}
+                  tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                  label={{
+                    value: "Xác suất rủi ro (Probability)",
+                    position: "insideBottom",
+                    offset: -20,
+                    fontSize: 11,
+                    fill: "hsl(215, 20%, 50%)",
+                  }}
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  domain={[0, 1]}
+                  tickCount={6}
+                  tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                  label={{
+                    value: "Mức độ tác động (Impact)",
+                    angle: -90,
+                    position: "insideLeft",
+                    offset: 15,
+                    fontSize: 11,
+                    fill: "hsl(215, 20%, 50%)",
+                  }}
+                  tick={{ fontSize: 10 }}
+                />
+                <ZAxis type="number" dataKey="z" range={[40, 500]} />
+                <ReferenceLine x={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+                <ReferenceLine y={0.5} stroke="hsl(215, 20%, 60%)" strokeWidth={1.5} strokeDasharray="4 2" />
+                <RechartsTooltip content={<CustomTooltip />} />
+                <Scatter
+                  data={diagramData}
+                  shape={<CustomDot />}
+                >
+                  {diagramData.map((entry) => (
+                    <Cell key={entry.id} fill={entry.color} />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
+          )}
+
+          {/* Explanation */}
+          <div className="mt-4 rounded-lg p-3 border text-xs space-y-1" style={{ background: "hsl(214, 10%, 97%)", borderColor: "hsl(214, 10%, 85%)" }}>
+            <p className="font-semibold text-muted-foreground mb-1">Giải thích:</p>
+            <p>• <strong>Probability (trục X):</strong> Tần suất xuất hiện rủi ro trong các năm đã chọn, trọng số cao hơn cho năm gần nhất</p>
+            <p>• <strong>Impact (trục Y):</strong> Mức độ tác động = Mức độ rủi ro (0-5) × Trọng số chỉ số / Thang tối đa</p>
+            <p>• <strong>Kích thước:</strong> Tầm quan trọng của chỉ số (trọng số 1-10)</p>
+            <p>• <span style={{ color: "hsl(25, 90%, 45%)" }}><strong>Màu cam:</strong></span> Chỉ có RR1 (vượt ngưỡng CQT)</p>
+            <p>• <span style={{ color: "hsl(215, 20%, 20%)" }}><strong>Màu đen:</strong></span> Chỉ có RR2 (ngoài phân vị ngành)</p>
+            <p>• <span style={{ color: "hsl(0, 72%, 48%)" }}><strong>Màu đỏ:</strong></span> Có cả RR1 và RR2</p>
+          </div>
 
           {/* Indicator toggle checkboxes */}
           <div className="mt-4">
@@ -3083,20 +3187,23 @@ function RiskDiagramView({
 }
 
 /* ========== RISK SCORING EDITOR ========== */
-const WEIGHT_FACTORS: Record<number, number> = { 1: 0.2, 2: 0.4, 3: 0.6, 4: 0.8, 5: 1.0 };
+const WEIGHT_FACTORS: Record<number, number> = { 1: 0.1, 2: 0.2, 3: 0.3, 4: 0.4, 5: 0.5, 6: 0.6, 7: 0.7, 8: 0.8, 9: 0.9, 10: 1.0 };
 const WEIGHT_LABELS_SCORING: Record<number, string> = {
-  1: "Rất thấp",
-  2: "Thấp",
-  3: "Trung bình",
-  4: "Cao",
-  5: "Rất cao",
+  10: "Rất cao", 9: "Rất cao", 8: "Cao", 7: "Cao",
+  6: "Trung bình", 5: "Trung bình", 4: "Thấp", 3: "Thấp",
+  2: "Rất thấp", 1: "Rất thấp",
 };
 const WEIGHT_COLORS_SCORING: Record<number, string> = {
   1: "hsl(215, 20%, 60%)",
-  2: "hsl(142, 55%, 40%)",
-  3: "hsl(45, 90%, 50%)",
-  4: "hsl(25, 90%, 50%)",
-  5: "hsl(0, 72%, 48%)",
+  2: "hsl(215, 20%, 55%)",
+  3: "hsl(142, 55%, 40%)",
+  4: "hsl(142, 55%, 35%)",
+  5: "hsl(45, 90%, 50%)",
+  6: "hsl(45, 90%, 45%)",
+  7: "hsl(25, 90%, 50%)",
+  8: "hsl(25, 90%, 45%)",
+  9: "hsl(0, 72%, 48%)",
+  10: "hsl(0, 72%, 40%)",
 };
 
 const INDICATOR_NAMES_SCORING: Record<string, string> = {
@@ -3126,24 +3233,47 @@ const INDICATOR_NAMES_SCORING: Record<string, string> = {
   "3.7": "Tốc độ tăng DT / Tốc độ tăng Giá vốn",
 };
 
+function calcRiskSeverity(
+  riskLevel: string,
+  companyValue: number | null,
+  median: number | null,
+  pLow: number | null,
+  pHigh: number | null
+): number {
+  if (riskLevel === "gray" || riskLevel === "green" || companyValue === null) return 0;
+  // red
+  if (median !== null && pLow !== null && pHigh !== null) {
+    const iqr = Math.abs(pHigh - pLow);
+    if (iqr === 0) return 3;
+    let deviation = 0;
+    if (companyValue < pLow) deviation = Math.abs(pLow - companyValue) / iqr;
+    else if (companyValue > pHigh) deviation = Math.abs(companyValue - pHigh) / iqr;
+    if (deviation <= 0.25) return 1;
+    if (deviation <= 0.5) return 2;
+    if (deviation <= 1.0) return 3;
+    if (deviation <= 2.0) return 4;
+    return 5;
+  }
+  return 3; // default moderate
+}
+
 function calcCompositeScore(
   indicators: TiraIndicator[],
   weights: Record<string, number>
 ): number {
-  let totalWeightedRisk = 0;
-  let totalWeightedMax = 0;
+  let totalWeighted = 0;
+  let maxWeighted = 0;
   for (const ind of indicators) {
-    const w = weights[ind.id] ?? 3;
-    const factor = w; // Now 5=most important, 1=least
-    let riskPoints = 0;
-    const r1 = (ind as any).risk_level_1 || ind.risk_level;
+    const w = weights[ind.id] ?? 5;
+    const r1 = (ind as any).risk_level_1 || ind.risk_level || "gray";
     const r2 = (ind as any).risk_level_2 || "gray";
-    if (r1 === "red") riskPoints += 2;
-    if (r2 === "red") riskPoints += 2;
-    totalWeightedRisk += riskPoints * factor;
-    totalWeightedMax += 4 * factor;
+    const sev1 = calcRiskSeverity(r1, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
+    const sev2 = calcRiskSeverity(r2, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
+    const totalSev = sev1 + sev2; // 0-10
+    totalWeighted += totalSev * w;
+    maxWeighted += 10 * w;
   }
-  return totalWeightedMax > 0 ? Math.round((totalWeightedRisk / totalWeightedMax) * 100) : 0;
+  return maxWeighted > 0 ? Math.round((totalWeighted / maxWeighted) * 100) : 0;
 }
 
 function RiskScoringEditor({
@@ -3193,7 +3323,7 @@ function RiskScoringEditor({
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Điều chỉnh trọng số từng chỉ số để tính điểm rủi ro theo mức ưu tiên riêng.
-          Mức 5 = quan trọng nhất, Mức 1 = ít quan trọng nhất.
+          Mức 10 = quan trọng nhất, Mức 1 = ít quan trọng nhất.
         </p>
       </CardHeader>
       <CardContent>
@@ -3320,7 +3450,7 @@ function RiskScoringEditor({
                         <Slider
                           value={[w]}
                           min={1}
-                          max={5}
+                          max={10}
                           step={1}
                           className="w-24"
                           onValueChange={([val]) => handleWeight(ind.id, val)}

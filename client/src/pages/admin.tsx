@@ -97,19 +97,22 @@ const INDICATOR_NAMES: Record<string, string> = {
 };
 
 const WEIGHT_LABELS: Record<number, string> = {
-  5: "Rất cao",
-  4: "Cao",
-  3: "Trung bình",
-  2: "Thấp",
-  1: "Rất thấp",
+  10: "Rất cao", 9: "Rất cao", 8: "Cao", 7: "Cao",
+  6: "Trung bình", 5: "Trung bình", 4: "Thấp", 3: "Thấp",
+  2: "Rất thấp", 1: "Rất thấp",
 };
 
 const WEIGHT_COLORS: Record<number, string> = {
-  5: "hsl(0, 72%, 48%)",
-  4: "hsl(25, 90%, 50%)",
-  3: "hsl(45, 90%, 50%)",
-  2: "hsl(142, 55%, 40%)",
   1: "hsl(215, 20%, 60%)",
+  2: "hsl(215, 20%, 55%)",
+  3: "hsl(142, 55%, 40%)",
+  4: "hsl(142, 55%, 35%)",
+  5: "hsl(45, 90%, 50%)",
+  6: "hsl(45, 90%, 45%)",
+  7: "hsl(25, 90%, 50%)",
+  8: "hsl(25, 90%, 45%)",
+  9: "hsl(0, 72%, 48%)",
+  10: "hsl(0, 72%, 40%)",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -526,7 +529,7 @@ export default function AdminPage() {
                                 <Slider
                                   value={[w.weight]}
                                   min={1}
-                                  max={5}
+                                  max={10}
                                   step={1}
                                   className="w-32"
                                   onValueChange={([val]) =>

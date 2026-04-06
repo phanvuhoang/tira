@@ -9,7 +9,7 @@ import OpenAI from "openai";
 import { storage } from "./storage";
 import { calculateTiraIndicators } from "./tira-engine";
 import { loadUsers, login, register, verifyToken, getAllUsers, updateUserRole, deleteUser, resetPassword, authMiddleware, requireRole } from "./auth";
-import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore } from "./risk-scoring";
+import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore, calculateYearScore, calculateMultiYearScore, calcRiskSeverity } from "./risk-scoring";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -177,7 +177,7 @@ async function callAnthropicModel(prompt: string, modelId: string): Promise<stri
   try {
     const msg = await anthropicClient.messages.create({
       model: modelId,
-      max_tokens: 8192,
+      max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     });
     const block = msg.content[0];
@@ -196,7 +196,7 @@ async function callDeepSeekModel(prompt: string, modelId: string): Promise<strin
     const completion = await deepseekClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 8192,
+      max_tokens: 4096,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -212,7 +212,7 @@ async function callOpenAIModel(prompt: string, modelId: string): Promise<string>
     const completion = await openaiClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 8192,
+      max_tokens: 4096,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -747,23 +747,19 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const { company, selectedYears, finData, targetIndicators, compResults } = analysis;
       const companyName = company.ten_tv || company.name || ticker;
 
-      // Build summary of financial data for the AI prompt
-      const financialSummary: Record<string, any> = {};
-      for (const year of selectedYears) {
-        if (finData[year]) {
-          financialSummary[year] = finData[year];
-        }
-      }
+      // Build concise data summary - only risky indicators
+      const latestYear = selectedYears[0];
+      const targetInds = targetIndicators[latestYear] || [];
+      const riskyInds = targetInds.filter((i: any) => i.risk_level_1 === "red" || i.risk_level_2 === "red");
 
-      // Build comparison summary
-      const comparisonSummary: Record<string, any> = {};
-      for (const [ct, cData] of Object.entries(compResults)) {
-        comparisonSummary[ct] = (cData as any).indicators;
-      }
+      // Key financial summary (compact)
+      const latestFin = finData?.[latestYear] || {};
+      const financialSummary = `Doanh thu thuần: ${latestFin["210"] || "N/A"}, Giá vốn: ${latestFin["211"] || "N/A"}, LN gộp: ${latestFin["220"] || "N/A"}, LNKT trước thuế: ${latestFin["250"] || "N/A"}, CP thuế hiện hành: ${latestFin["251"] || "N/A"}, LN sau thuế: ${latestFin["260"] || "N/A"}, Tổng TS: ${latestFin["1270"] || "N/A"}, Nợ PT: ${latestFin["1300"] || "N/A"}, VCSH: ${latestFin["1400"] || "N/A"}`;
 
-      const financialDataJson = JSON.stringify(financialSummary, null, 2);
-      const tiraIndicatorsJson = JSON.stringify(targetIndicators, null, 2);
-      const comparisonDataJson = JSON.stringify(comparisonSummary, null, 2);
+      // Compact indicator data
+      const indicatorSummary = riskyInds.map((i: any) =>
+        `${i.id} ${i.name}: value=${i.company_value}, RR1=${i.risk_level_1}, RR2=${i.risk_level_2}, median=${i.industry_median}, range=[${i.industry_p_low}-${i.industry_p_high}]`
+      ).join('\n');
 
       // Generate requested reports
       const generatedReports: Record<string, string> = {};
@@ -774,39 +770,31 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         let prompt = "";
 
         if (rType === "financial") {
-          prompt = `Bạn là chuyên gia phân tích tài chính. Viết báo cáo phân tích sơ bộ tình hình tài chính bằng tiếng Việt cho công ty ${ticker} - ${companyName}.
+          prompt = `Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${selectedYears.join(', ')}.
 
-Báo cáo cần bao gồm:
-1. Executive Summary (tóm tắt tổng quan)
-2. Phân tích doanh thu và lợi nhuận (xu hướng qua các năm)
-3. Phân tích cơ cấu tài sản và nguồn vốn
-4. Phân tích hiệu quả hoạt động
-5. Các vấn đề và rủi ro tài chính cần lưu ý
-6. Kết luận và khuyến nghị
+Số liệu chính (${latestYear}): ${financialSummary}
 
-Dữ liệu tài chính: ${financialDataJson}
-Kết quả phân tích TIRA: ${tiraIndicatorsJson}
+Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
+1. Executive Summary (3-5 dòng)
+2. Các vấn đề tài chính nổi bật liên quan đến rủi ro thuế
+3. Mối liên hệ giữa các chỉ số tài chính và thuế
 
-Hãy liên kết các chỉ số với nhau (ví dụ: doanh thu tăng nhưng lợi nhuận giảm, ETR thay đổi...).
-Viết chuyên nghiệp, có số liệu cụ thể. Viết đầy đủ, chi tiết, không cắt ngắn báo cáo.`;
+KHÔNG phân tích chi tiết các điểm an toàn. Chỉ tập trung vào rủi ro và connections.`;
         } else if (rType === "tax") {
-          prompt = `Bạn là chuyên gia tư vấn thuế. Viết báo cáo phân tích rủi ro thuế bằng tiếng Việt cho công ty ${ticker} - ${companyName} dựa trên chỉ số TIRA.
+          prompt = `Phân tích rủi ro thuế công ty ${ticker} (${companyName}), năm ${selectedYears.join(', ')}.
 
-Báo cáo cần bao gồm:
-1. Executive Summary - Tóm tắt mức độ rủi ro thuế tổng thể
-2. Phân tích Yếu tố rủi ro 1 (ngưỡng cố định - góc nhìn cơ quan thuế):
-   - Liệt kê các chỉ số có RR1 = "red" và phân tích ý nghĩa
-3. Phân tích Yếu tố rủi ro 2 (so sánh phân vị ngành):
-   - Liệt kê các chỉ số có RR2 = "red" và phân tích ý nghĩa
-4. Phân tích tương quan giữa các chỉ số (ví dụ: DT tăng nhưng ETR giảm)
-5. Các rủi ro trọng yếu cần lưu ý
-6. Khuyến nghị hành động
+Các chỉ số có rủi ro:
+${indicatorSummary}
 
-Dữ liệu TIRA: ${tiraIndicatorsJson}
-Dữ liệu tài chính: ${financialDataJson}
-So sánh ngành: ${comparisonDataJson}
+Số liệu tài chính chính: ${financialSummary}
 
-Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số liệu cụ thể. Viết đầy đủ, chi tiết, không cắt ngắn báo cáo.`;
+Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
+1. Executive Summary: tổng quan rủi ro (3-5 dòng)
+2. Phân tích từng chỉ số rủi ro: lý do, ý nghĩa, và mối liên hệ với các chỉ số khác
+3. Kết nối giữa các rủi ro (ví dụ: DT tăng nhưng ETR giảm)
+4. Khuyến nghị hành động (3-5 bullet points)
+
+KHÔNG phân tích chỉ số an toàn. Chỉ tập trung rủi ro. Viết tối đa 2000 từ.`;
         } else {
           // Unknown report type — skip gracefully
           continue;
@@ -1012,6 +1000,22 @@ Tập trung vào các rủi ro cần lưu ý. Viết chuyên nghiệp, có số 
     if (!Array.isArray(indicators)) return res.status(400).json({ error: "indicators phải là array" });
     const result = calculateCompositeScore(indicators, weights);
     res.json(result);
+  });
+
+  app.post("/api/risk-score/multi-year", (req: Request, res: Response) => {
+    const { yearIndicators, weights } = req.body;
+    // yearIndicators: { [year: string]: indicator[] }
+    if (!yearIndicators || typeof yearIndicators !== "object") {
+      return res.status(400).json({ error: "yearIndicators required" });
+    }
+
+    const yearScores = Object.entries(yearIndicators).map(([year, inds]: [string, any]) => {
+      const result = calculateYearScore(inds, weights);
+      return { year, score: result.score, breakdown: result.breakdown };
+    });
+
+    const multiYear = calculateMultiYearScore(yearScores);
+    res.json({ yearScores, multiYear });
   });
 
   // ════════════════════════════════════════════════════════════
