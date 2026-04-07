@@ -23,7 +23,10 @@ import {
   Plus,
   BarChart3,
   ChevronRight,
+  Sparkles,
+  Check,
 } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 interface Company {
   ma_ck: string;
@@ -51,6 +54,8 @@ export default function Home() {
   const [showCompSearch, setShowCompSearch] = useState(false);
   const [percentileLow, setPercentileLow] = useState(25);
   const [percentileHigh, setPercentileHigh] = useState(75);
+  const [aiSuggestions, setAiSuggestions] = useState<Company[]>([]);
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
 
   // Search companies
   const { data: searchResults, isLoading: isSearching } = useQuery<Company[]>({
@@ -121,6 +126,46 @@ export default function Home() {
   const handleRemoveComparison = useCallback((ticker: string) => {
     setComparisonTickers((prev) => prev.filter((c) => c.ma_ck !== ticker));
   }, []);
+
+  const toggleComparison = useCallback(
+    (ticker: string) => {
+      const existing = comparisonTickers.find((c) => c.ma_ck === ticker);
+      if (existing) {
+        setComparisonTickers((prev) => prev.filter((c) => c.ma_ck !== ticker));
+      } else {
+        const suggestion = aiSuggestions.find((c) => c.ma_ck === ticker);
+        if (suggestion) {
+          setComparisonTickers((prev) => [...prev, suggestion]);
+        }
+      }
+    },
+    [comparisonTickers, aiSuggestions]
+  );
+
+  const handleAiSuggest = useCallback(async () => {
+    if (!selectedCompany) return;
+    setAiSuggestLoading(true);
+    try {
+      const res = await apiRequest(
+        "POST",
+        `/api/suggest-comparables`,
+        {
+          ticker: selectedCompany.ma_ck,
+          company_name: selectedCompany.ten_tv,
+          industry: selectedCompany.nganh_2 || "",
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setAiSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
+      }
+    } catch (e) {
+      // Silently fail – show nothing
+      setAiSuggestions([]);
+    } finally {
+      setAiSuggestLoading(false);
+    }
+  }, [selectedCompany, reportType]);
 
   const handleAnalyze = () => {
     if (!selectedCompany) return;
@@ -483,6 +528,57 @@ export default function Home() {
                     </div>
                   </div>
                 )}
+
+                {/* AI suggestions */}
+                <div className="mt-4 border-t pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">{t("home.aiSuggestions")}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAiSuggest}
+                      disabled={aiSuggestLoading || !selectedCompany}
+                      data-testid="button-ai-suggest"
+                    >
+                      {aiSuggestLoading ? (
+                        <span className="w-3 h-3 mr-1 animate-spin inline-block border-2 border-current border-t-transparent rounded-full" />
+                      ) : (
+                        <Sparkles className="w-3 h-3 mr-1" />
+                      )}
+                      {t("home.aiSuggest")}
+                    </Button>
+                  </div>
+                  {aiSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiSuggestions.map((c) => (
+                        <Tooltip key={c.ma_ck}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant={comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck) ? "default" : "ghost"}
+                              size="sm"
+                              className="h-auto text-xs px-2 py-1"
+                              onClick={() => toggleComparison(c.ma_ck)}
+                              data-testid={`ai-suggest-${c.ma_ck}`}
+                            >
+                              {comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck) ? (
+                                <Check className="w-3 h-3 mr-1" />
+                              ) : (
+                                <Plus className="w-3 h-3 mr-1" />
+                              )}
+                              {c.ma_ck}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{c.ten_tv}</TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  )}
+                  {!aiSuggestLoading && aiSuggestions.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Nhấn “AI đề xuất” để nhận gợi ý từ AI.
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 

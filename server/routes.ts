@@ -695,6 +695,114 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ════════════════════════════════════════════════════════════
+  // Financial Data API
+  // GET /api/financial-data/:ticker/:reportType/:year
+  // POST /api/financial-data/batch
+  // ════════════════════════════════════════════════════════════
+  app.get("/api/financial-data/:ticker/:reportType/:year", (req: Request, res: Response) => {
+    const { ticker, reportType, year } = req.params;
+    const data = storage.getFinancialData(ticker, reportType);
+    if (!data || !data[year]) {
+      return res.status(404).json({ error: "Không tìm thấy dữ liệu" });
+    }
+    res.json({ ticker, reportType, year, data: data[year] });
+  });
+
+  app.post("/api/financial-data/batch", (req: Request, res: Response) => {
+    const { tickers, reportType, years } = req.body;
+    const result: Record<string, Record<string, any>> = {};
+    for (const ticker of tickers) {
+      result[ticker] = {};
+      const data = storage.getFinancialData(ticker, reportType);
+      if (data) {
+        for (const year of years) {
+          if (data[year]) result[ticker][year] = data[year];
+        }
+      }
+    }
+    res.json(result);
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // AI Company Suggestion API
+  // POST /api/suggest-comparables
+  // ════════════════════════════════════════════════════════════
+  app.post("/api/suggest-comparables", async (req: Request, res: Response) => {
+    const { ticker, company_name, industry } = req.body;
+
+    // Get list of all company tickers in the database for validation
+    const allCompanies = storage.searchCompanies("").slice(0, 2000);
+    const tickerList = allCompanies.map(c => `${c.ma_ck} (${c.ten_tv})`).join(", ");
+
+    // Truncate ticker list if too long
+    const truncatedList = tickerList.length > 3000 ? tickerList.substring(0, 3000) + "..." : tickerList;
+
+    const prompt = `Bạn là chuyên gia phân tích tài chính Việt Nam. Tìm 5-10 công ty niêm yết trên sàn chứng khoán Việt Nam (HOSE, HNX, UPCOM) có thể so sánh được với công ty ${ticker} - ${company_name} (ngành: ${industry}).
+
+Các công ty so sánh nên:
+- Cùng ngành hoặc hoạt động kinh doanh tương đồng
+- Có quy mô tương đương hoặc là đối thủ cạnh tranh
+- Có dữ liệu tài chính công khai
+
+Danh sách công ty trong database: ${truncatedList}
+
+Trả lời CHÍNH XÁC theo format JSON array, chỉ bao gồm mã CK có trong danh sách trên:
+["MÃ1", "MÃ2", "MÃ3", ...]
+
+Chỉ trả lời JSON array, không giải thích.`;
+
+    try {
+      let response = "";
+      // Try OpenAI first, fallback to DeepSeek
+      if (openaiClient) {
+        const completion = await openaiClient.chat.completions.create({
+          model: OPENAI_MODEL,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 500,
+        });
+        response = completion.choices[0]?.message?.content || "[]";
+      } else if (deepseekClient) {
+        const completion = await deepseekClient.chat.completions.create({
+          model: DEEPSEEK_MODEL,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 500,
+        });
+        response = completion.choices[0]?.message?.content || "[]";
+      } else if (anthropicClient) {
+        const msg = await anthropicClient.messages.create({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 500,
+          messages: [{ role: "user", content: prompt }],
+        });
+        const block = msg.content[0];
+        response = block.type === "text" ? block.text : "[]";
+      } else {
+        return res.status(400).json({ error: "Không có AI API key nào được cấu hình" });
+      }
+
+      // Parse response - extract JSON array
+      const match = response.match(/\[[\s\S]*\]/);
+      if (!match) return res.json({ suggestions: [] });
+
+      const suggestedTickers: string[] = JSON.parse(match[0]);
+
+      // Validate: only return tickers that exist in database
+      const validSuggestions = suggestedTickers
+        .filter(t => allCompanies.some(c => c.ma_ck === t))
+        .filter(t => t !== ticker) // exclude target
+        .map(t => {
+          const company = allCompanies.find(c => c.ma_ck === t);
+          return company ? { ma_ck: company.ma_ck, ten_tv: company.ten_tv, nganh_2: company.nganh_2 } : null;
+        })
+        .filter(Boolean);
+
+      res.json({ suggestions: validSuggestions });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
   // FEATURE 1: AI Report Generation
   // POST /api/generate-report
   // ════════════════════════════════════════════════════════════
@@ -710,6 +818,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         percentile_high = 75,
         report_types = ["financial"],
         ai_model = "claude-haiku",
+        language = "vi",
       } = req.body;
 
       if (!ticker) {
@@ -793,13 +902,19 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       // Generate requested reports
       const generatedReports: Record<string, string> = {};
 
+      const langInstruction = language === "en"
+        ? "Write in English. Use professional financial analysis tone."
+        : "Viết bằng tiếng Việt. Sử dụng giọng phân tích tài chính chuyên nghiệp.";
+
       const reportTypeList: string[] = Array.isArray(report_types) ? report_types : ["financial"];
 
       for (const rType of reportTypeList) {
         let prompt = "";
 
         if (rType === "financial") {
-          prompt = `Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${reportYears.join(', ')}.
+          prompt = `${langInstruction}
+
+Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${reportYears.join(', ')}.
 
 Số liệu chính (${latestYear}): ${financialSummary}
 
@@ -810,7 +925,9 @@ Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
 
 KHÔNG phân tích chi tiết các điểm an toàn. Chỉ tập trung vào rủi ro và connections.`;
         } else if (rType === "tax") {
-          prompt = `Phân tích rủi ro thuế công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
+          prompt = `${langInstruction}
+
+Phân tích rủi ro thuế công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
 
 Dữ liệu chỉ số rủi ro theo từng năm:
 ${allYearData}

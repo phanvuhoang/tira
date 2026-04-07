@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { t, useLang, FS_LABELS, IS_KEYS, BS_KEYS, getLang } from "@/lib/i18n";
 import { getToken } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { getHashParams } from "@/lib/hashLocation";
@@ -1300,6 +1301,8 @@ export default function Dashboard() {
           <TabsTrigger value="risk-heatmap" data-testid="tab-risk-heatmap">Biểu đồ nhiệt</TabsTrigger>
           <TabsTrigger value="risk-diagram" data-testid="tab-risk-diagram">Risk Diagram</TabsTrigger>
           <TabsTrigger value="explanation" data-testid="tab-giai-thich">Tính điểm RR</TabsTrigger>
+          <TabsTrigger value="financials" data-testid="tab-financials">{t("tab.financials")}</TabsTrigger>
+          <TabsTrigger value="fs-analysis" data-testid="tab-fs-analysis">{t("tab.fsAnalysis")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="heatmap" className="mt-4">
@@ -1332,6 +1335,14 @@ export default function Dashboard() {
 
         <TabsContent value="explanation" className="mt-4">
           <CompositeScoreExplanation result={result} weights={customWeights} />
+        </TabsContent>
+
+        <TabsContent value="financials" className="mt-4">
+          <FinancialsView result={result} />
+        </TabsContent>
+
+        <TabsContent value="fs-analysis" className="mt-4">
+          <FSAnalysisView result={result} />
         </TabsContent>
       </Tabs>
 
@@ -4041,5 +4052,487 @@ function RiskScoringEditor({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ========== FINANCIALS VIEW ========== */
+function FinancialsView({ result }: { result: AnalysisResult }) {
+  const { target, comparisons } = result;
+  const allCompanies = [
+    { ma_ck: target.company.ma_ck, ten_tv: target.company.ten_tv },
+    ...Object.values(comparisons).map((c) => ({ ma_ck: c.company.ma_ck, ten_tv: c.company.ten_tv })),
+  ];
+  const allYears = target.years;
+
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([target.company.ma_ck]);
+  const [selectedYears, setSelectedYears] = useState<string[]>([allYears[0]]);
+
+  // Use getLang() inside render so it reacts to language changes
+  useLang();
+  const lang = getLang();
+
+  const { data: financialData, isLoading } = useQuery({
+    queryKey: ["/api/financial-data/batch", selectedTickers, selectedYears, target.report_type],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/financial-data/batch", {
+        tickers: selectedTickers,
+        reportType: target.report_type,
+        years: selectedYears,
+      });
+      return res.json();
+    },
+    enabled: selectedTickers.length > 0 && selectedYears.length > 0,
+  });
+
+  const toggleTicker = (ticker: string) => {
+    setSelectedTickers((prev) =>
+      prev.includes(ticker) ? prev.filter((t) => t !== ticker) : [...prev, ticker]
+    );
+  };
+
+  const toggleYear = (year: string) => {
+    setSelectedYears((prev) =>
+      prev.includes(year) ? prev.filter((y) => y !== year) : [...prev, year]
+    );
+  };
+
+  // Format number as VND with thousands separator
+  const fmtVnd = (val: number | null | undefined): string => {
+    if (val == null) return "—";
+    return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(val);
+  };
+
+  // Build column headers: [ticker, year] pairs sorted by ticker then year
+  const columns: { ticker: string; year: string }[] = [];
+  for (const ticker of selectedTickers) {
+    for (const year of [...selectedYears].sort()) {
+      columns.push({ ticker, year });
+    }
+  }
+
+  // Look up value from financialData
+  // financialData shape assumed: Record<ticker, Record<year, Record<key, number>>>
+  const getValue = (ticker: string, year: string, key: string): number | null => {
+    if (!financialData) return null;
+    return financialData?.[ticker]?.[year]?.[key] ?? null;
+  };
+
+  const renderTable = (keys: string[], sectionLabel: string) => (
+    <div className="mb-8">
+      <h3 className="text-sm font-semibold mb-2 px-1" style={{ color: "hsl(144, 97%, 27%)" }}>
+        {sectionLabel}
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border" style={{ background: "hsl(214, 10%, 97%)" }}>
+              <th className="text-left px-3 py-2 font-semibold w-52">Chỉ số</th>
+              {columns.map((col) => (
+                <th key={`${col.ticker}-${col.year}`} className="text-right px-3 py-2 font-semibold whitespace-nowrap">
+                  {col.ticker} {col.year}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((key, idx) => {
+              const label = FS_LABELS[key]?.[lang] ?? FS_LABELS[key]?.vi ?? key;
+              return (
+                <tr
+                  key={key}
+                  className="border-b border-border last:border-0"
+                  style={{ background: idx % 2 === 0 ? "transparent" : "hsl(214, 10%, 98%)" }}
+                >
+                  <td className="px-3 py-1.5 font-medium text-muted-foreground truncate max-w-[200px]">
+                    <span title={label}>{label}</span>
+                  </td>
+                  {columns.map((col) => {
+                    const val = getValue(col.ticker, col.year, key);
+                    return (
+                      <td key={`${col.ticker}-${col.year}`} className="text-right px-3 py-1.5 font-mono tabular-nums">
+                        {fmtVnd(val)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Controls */}
+      <Card>
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-wrap gap-4">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Công ty</p>
+              <div className="flex flex-wrap gap-1.5">
+                {allCompanies.map((c) => (
+                  <Button
+                    key={c.ma_ck}
+                    size="sm"
+                    variant={selectedTickers.includes(c.ma_ck) ? "default" : "outline"}
+                    onClick={() => toggleTicker(c.ma_ck)}
+                    className="h-7 text-xs px-2"
+                  >
+                    {c.ma_ck}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Năm</p>
+              <div className="flex flex-wrap gap-1.5">
+                {allYears.map((year) => (
+                  <Button
+                    key={year}
+                    size="sm"
+                    variant={selectedYears.includes(year) ? "default" : "outline"}
+                    onClick={() => toggleYear(year)}
+                    className="h-7 text-xs px-2"
+                  >
+                    {year}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {isLoading && (
+        <div className="space-y-2">
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      )}
+
+      {!isLoading && financialData && (
+        <Card>
+          <CardContent className="pt-4">
+            {renderTable(IS_KEYS, "Kết quả kinh doanh (triệu VND)")}
+            {renderTable(BS_KEYS, "Bảng cân đối kế toán (triệu VND)")}
+          </CardContent>
+        </Card>
+      )}
+
+      {!isLoading && !financialData && (
+        <Card>
+          <CardContent className="pt-6 pb-6 text-center text-sm text-muted-foreground">
+            Chọn công ty và năm để xem báo cáo tài chính.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ========== FS ANALYSIS VIEW ========== */
+function FSAnalysisView({ result }: { result: AnalysisResult }) {
+  const { target, comparisons } = result;
+  const allYears = target.years;
+  const allCompanies = [
+    { ma_ck: target.company.ma_ck, ten_tv: target.company.ten_tv },
+    ...Object.values(comparisons).map((c) => ({ ma_ck: c.company.ma_ck, ten_tv: c.company.ten_tv })),
+  ];
+
+  const [selectedYears, setSelectedYears] = useState<string[]>(allYears.slice(0, 3));
+  const [analysisType, setAnalysisType] = useState<"horizontal" | "vertical">("horizontal");
+  const [compareWith, setCompareWith] = useState<string>("target");
+
+  useLang();
+  const lang = getLang();
+
+  const fetchTickers = analysisType === "vertical" && compareWith !== "target"
+    ? [target.company.ma_ck, compareWith]
+    : [target.company.ma_ck];
+
+  // Fetch enough years for horizontal (need prior year too)
+  const yearsToFetch = useMemo(() => {
+    const sortedYears = [...allYears].sort();
+    const needed = new Set(selectedYears);
+    // For horizontal analysis, also fetch prior year for each selected year
+    if (analysisType === "horizontal") {
+      for (const yr of selectedYears) {
+        const idx = sortedYears.indexOf(yr);
+        if (idx > 0) needed.add(sortedYears[idx - 1]);
+      }
+    }
+    return Array.from(needed);
+  }, [selectedYears, analysisType, allYears]);
+
+  const { data: fsData, isLoading } = useQuery({
+    queryKey: ["/api/financial-data/batch/fs-analysis", fetchTickers, yearsToFetch, target.report_type],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/financial-data/batch", {
+        tickers: fetchTickers,
+        reportType: target.report_type,
+        years: yearsToFetch,
+      });
+      return res.json();
+    },
+    enabled: fetchTickers.length > 0 && yearsToFetch.length > 0,
+  });
+
+  const toggleYear = (year: string) => {
+    setSelectedYears((prev) =>
+      prev.includes(year) ? prev.filter((y) => y !== year) : [...prev, year]
+    );
+  };
+
+  const sortedSelectedYears = [...selectedYears].sort();
+  const allSortedYears = [...allYears].sort();
+
+  const targetTicker = target.company.ma_ck;
+
+  // Horizontal analysis: YoY growth %
+  const renderHorizontal = () => {
+    const rows = [...IS_KEYS, ...BS_KEYS];
+    return (
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border" style={{ background: "hsl(214, 10%, 97%)" }}>
+              <th className="text-left px-3 py-2 font-semibold w-52">Chỉ số</th>
+              {sortedSelectedYears.map((yr) => (
+                <th key={yr} className="text-right px-3 py-2 font-semibold">
+                  Δ {yr} (%)
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((key, idx) => {
+              const label = FS_LABELS[key]?.[lang] ?? FS_LABELS[key]?.vi ?? key;
+              return (
+                <tr
+                  key={key}
+                  className="border-b border-border last:border-0"
+                  style={{ background: idx % 2 === 0 ? "transparent" : "hsl(214, 10%, 98%)" }}
+                >
+                  <td className="px-3 py-1.5 font-medium text-muted-foreground truncate max-w-[200px]">
+                    <span title={label}>{label}</span>
+                  </td>
+                  {sortedSelectedYears.map((yr) => {
+                    const priorYrIdx = allSortedYears.indexOf(yr) - 1;
+                    const priorYr = priorYrIdx >= 0 ? allSortedYears[priorYrIdx] : null;
+                    const curVal = fsData?.[targetTicker]?.[yr]?.[key] ?? null;
+                    const priorVal = priorYr ? (fsData?.[targetTicker]?.[priorYr]?.[key] ?? null) : null;
+                    let growth: number | null = null;
+                    if (curVal != null && priorVal != null && priorVal !== 0) {
+                      growth = ((curVal - priorVal) / Math.abs(priorVal)) * 100;
+                    }
+                    const isOutlier = growth != null && (growth > 50 || growth < -50);
+                    const color = growth == null
+                      ? "hsl(214, 10%, 70%)"
+                      : isOutlier
+                      ? growth > 0 ? "hsl(142, 55%, 40%)" : "hsl(0, 72%, 48%)"
+                      : growth > 0 ? "hsl(142, 55%, 40%)" : "hsl(0, 72%, 48%)";
+                    return (
+                      <td
+                        key={yr}
+                        className="text-right px-3 py-1.5 font-mono tabular-nums font-medium"
+                        style={{
+                          color: growth == null ? "hsl(214, 10%, 70%)" : color,
+                          background: isOutlier
+                            ? growth! > 0 ? "hsl(142, 55%, 40%, 0.08)" : "hsl(0, 72%, 48%, 0.08)"
+                            : undefined,
+                        }}
+                      >
+                        {growth == null ? "—" : `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%`}
+                        {priorYr == null && curVal != null ? <span className="text-[10px] ml-1 opacity-50">(no prior)</span> : null}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // Vertical analysis: common-size
+  const renderVertical = () => {
+    const isRows = IS_KEYS;
+    const bsRows = BS_KEYS;
+    const compTicker = compareWith !== "target" ? compareWith : null;
+
+    const renderSection = (keys: string[], baseKey: string, sectionLabel: string) => (
+      <div className="mb-6">
+        <h4 className="text-xs font-semibold mb-2 px-1" style={{ color: "hsl(144, 97%, 27%)" }}>
+          {sectionLabel}
+        </h4>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border" style={{ background: "hsl(214, 10%, 97%)" }}>
+                <th className="text-left px-3 py-2 font-semibold w-52">Chỉ số</th>
+                {sortedSelectedYears.map((yr) => (
+                  <>
+                    <th key={`${yr}-target`} className="text-right px-3 py-2 font-semibold whitespace-nowrap">
+                      {targetTicker} {yr}
+                    </th>
+                    {compTicker && (
+                      <th key={`${yr}-comp`} className="text-right px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "hsl(215, 70%, 50%)" }}>
+                        {compTicker} {yr}
+                      </th>
+                    )}
+                  </>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((key, idx) => {
+                const label = FS_LABELS[key]?.[lang] ?? FS_LABELS[key]?.vi ?? key;
+                return (
+                  <tr
+                    key={key}
+                    className="border-b border-border last:border-0"
+                    style={{ background: idx % 2 === 0 ? "transparent" : "hsl(214, 10%, 98%)" }}
+                  >
+                    <td className="px-3 py-1.5 font-medium text-muted-foreground truncate max-w-[200px]">
+                      <span title={label}>{label}</span>
+                    </td>
+                    {sortedSelectedYears.map((yr) => {
+                      const targetBase = fsData?.[targetTicker]?.[yr]?.[baseKey] ?? null;
+                      const targetVal = fsData?.[targetTicker]?.[yr]?.[key] ?? null;
+                      const targetPct = targetBase && targetBase !== 0 && targetVal != null
+                        ? (targetVal / Math.abs(targetBase)) * 100
+                        : null;
+
+                      const compBase = compTicker ? (fsData?.[compTicker]?.[yr]?.[baseKey] ?? null) : null;
+                      const compVal = compTicker ? (fsData?.[compTicker]?.[yr]?.[key] ?? null) : null;
+                      const compPct = compBase && compBase !== 0 && compVal != null
+                        ? (compVal / Math.abs(compBase)) * 100
+                        : null;
+
+                      return (
+                        <>
+                          <td key={`${yr}-t`} className="text-right px-3 py-1.5 font-mono tabular-nums">
+                            {targetPct == null ? "—" : `${targetPct.toFixed(1)}%`}
+                          </td>
+                          {compTicker && (
+                            <td key={`${yr}-c`} className="text-right px-3 py-1.5 font-mono tabular-nums" style={{ color: "hsl(215, 70%, 50%)" }}>
+                              {compPct == null ? "—" : `${compPct.toFixed(1)}%`}
+                            </td>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+
+    return (
+      <div>
+        {renderSection(isRows, "210", "Kết quả kinh doanh (cơ sở: Doanh thu thuần = 100%)")}
+        {renderSection(bsRows, "1270", "Bảng cân đối kế toán (cơ sở: Tổng tài sản = 100%)")}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Controls */}
+      <Card>
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-wrap gap-4 items-start">
+            {/* Analysis type */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Loại phân tích</p>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant={analysisType === "horizontal" ? "default" : "outline"}
+                  onClick={() => setAnalysisType("horizontal")}
+                  className="h-7 text-xs"
+                >
+                  Tăng trưởng YoY
+                </Button>
+                <Button
+                  size="sm"
+                  variant={analysisType === "vertical" ? "default" : "outline"}
+                  onClick={() => setAnalysisType("vertical")}
+                  className="h-7 text-xs"
+                >
+                  Common-size
+                </Button>
+              </div>
+            </div>
+            {/* Years */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Năm</p>
+              <div className="flex flex-wrap gap-1.5">
+                {allYears.map((year) => (
+                  <Button
+                    key={year}
+                    size="sm"
+                    variant={selectedYears.includes(year) ? "default" : "outline"}
+                    onClick={() => toggleYear(year)}
+                    className="h-7 text-xs px-2"
+                  >
+                    {year}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            {/* Compare with (vertical only) */}
+            {analysisType === "vertical" && allCompanies.length > 1 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">So sánh với</p>
+                <Select value={compareWith} onValueChange={setCompareWith}>
+                  <SelectTrigger className="h-7 text-xs w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="target">Không so sánh</SelectItem>
+                    {allCompanies.slice(1).map((c) => (
+                      <SelectItem key={c.ma_ck} value={c.ma_ck}>
+                        {c.ma_ck} – {c.ten_tv}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {isLoading && (
+        <div className="space-y-2">
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      )}
+
+      {!isLoading && fsData && (
+        <Card>
+          <CardContent className="pt-4">
+            {analysisType === "horizontal" ? renderHorizontal() : renderVertical()}
+          </CardContent>
+        </Card>
+      )}
+
+      {!isLoading && !fsData && (
+        <Card>
+          <CardContent className="pt-6 pb-6 text-center text-sm text-muted-foreground">
+            Không có dữ liệu báo cáo tài chính.
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }

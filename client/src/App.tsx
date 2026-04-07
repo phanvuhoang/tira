@@ -15,6 +15,7 @@ import LoginPage from "@/pages/login";
 import AdminPage from "@/pages/admin";
 import { useState } from "react";
 import { setToken } from "@/lib/auth";
+import { useLang, t } from "@/lib/i18n";
 import {
   BarChart3,
   Building2,
@@ -27,6 +28,7 @@ import {
   Settings,
   LogOut,
   User,
+  Globe,
 } from "lucide-react";
 
 interface UserInfo {
@@ -44,6 +46,7 @@ interface SidebarProps {
 function Sidebar({ user, onLogout }: SidebarProps) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [lang, setLangState] = useLang();
 
   const isAdmin = user.role === "admin";
 
@@ -55,12 +58,12 @@ function Sidebar({ user, onLogout }: SidebarProps) {
   })();
 
   const links = [
-    { href: "/", label: "Phân tích", icon: BarChart3, adminOnly: false },
-    { href: dashboardHref, label: "Dashboard", icon: Shield, adminOnly: false },
-    { href: "/custom", label: "Công ty mới", icon: PlusCircle, adminOnly: false },
-    { href: "/upload", label: "Tải dữ liệu", icon: Upload, adminOnly: false },
-    { href: "/history", label: "Lịch sử", icon: FileText, adminOnly: false },
-    { href: "/admin", label: "Quản trị", icon: Settings, adminOnly: true },
+    { href: "/", label: t("nav.analysis"), icon: BarChart3, adminOnly: false },
+    { href: dashboardHref, label: t("nav.dashboard"), icon: Shield, adminOnly: false },
+    { href: "/custom", label: t("nav.newCompany"), icon: PlusCircle, adminOnly: false },
+    { href: "/upload", label: t("nav.upload"), icon: Upload, adminOnly: false },
+    { href: "/history", label: t("nav.history"), icon: FileText, adminOnly: false },
+    { href: "/admin", label: t("nav.admin"), icon: Settings, adminOnly: true },
   ].filter((link) => !link.adminOnly || isAdmin);
 
   const isActive = (href: string) => {
@@ -183,6 +186,14 @@ function Sidebar({ user, onLogout }: SidebarProps) {
           </div>
 
           <div className="px-2">
+            <button
+              onClick={() => setLangState(lang === "vi" ? "en" : "vi")}
+              className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md hover:bg-sidebar-accent/50 transition-colors text-[11px] text-sidebar-foreground/60 mb-1"
+              title={lang === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{lang === "vi" ? "English" : "Tiếng Việt"}</span>
+            </button>
             <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/40">
               <Building2 className="w-3.5 h-3.5" />
               <span>1,656 công ty niêm yết</span>
