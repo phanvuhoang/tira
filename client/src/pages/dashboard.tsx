@@ -574,6 +574,7 @@ export default function Dashboard() {
   const [isExporting, setIsExporting] = useState(false);
   const [aiReportOpen, setAiReportOpen] = useState(false);
   const [aiReportTypes, setAiReportTypes] = useState<string[]>(["financial", "tax"]);
+  const [aiReportYears, setAiReportYears] = useState<string[]>(years);
   const [aiModel, setAiModel] = useState("anthropic");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiReportContent, setAiReportContent] = useState<string | null>(null);
@@ -871,7 +872,7 @@ export default function Dashboard() {
           ticker,
           report_type: reportType,
           years,
-          selected_years: years,
+          selected_years: aiReportYears,
           comparisons,
           percentile_low: percentileLow,
           percentile_high: percentileHigh,
@@ -913,7 +914,7 @@ export default function Dashboard() {
     } finally {
       setAiGenerating(false);
     }
-  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiModel, canEdit]);
+  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiReportYears, aiModel, canEdit]);
 
   const handleSaveAiReport = useCallback(async () => {
     if (!result || !aiReportContent) return;
@@ -1098,6 +1099,34 @@ export default function Dashboard() {
                   <Label htmlFor="ai-tax" className="cursor-pointer">Báo cáo rủi ro thuế</Label>
                 </label>
               </div>
+            </div>
+
+            {/* Year selector */}
+            <div>
+              <p className="text-sm font-semibold mb-2">Năm phân tích</p>
+              <div className="flex flex-wrap gap-2">
+                {years.map((year) => (
+                  <label key={year} className="flex items-center gap-1.5 cursor-pointer">
+                    <Checkbox
+                      checked={aiReportYears.includes(year)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setAiReportYears((prev) => [...prev, year].sort((a, b) => Number(b) - Number(a)));
+                        } else {
+                          if (aiReportYears.length > 1) {
+                            setAiReportYears((prev) => prev.filter((y) => y !== year));
+                          }
+                        }
+                      }}
+                      data-testid={`checkbox-year-${year}`}
+                    />
+                    <Label className="cursor-pointer text-sm">{year}</Label>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Chọn các năm cần phân tích trong báo cáo AI ({aiReportYears.length}/{years.length} năm)
+              </p>
             </div>
 
             {/* AI Model selector */}
