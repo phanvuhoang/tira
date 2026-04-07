@@ -15,7 +15,7 @@ import LoginPage from "@/pages/login";
 import AdminPage from "@/pages/admin";
 import { useState } from "react";
 import { setToken } from "@/lib/auth";
-import { useLang, t } from "@/lib/i18n";
+import { getLang, setLang, t } from "@/lib/i18n";
 import {
   BarChart3,
   Building2,
@@ -46,7 +46,7 @@ interface SidebarProps {
 function Sidebar({ user, onLogout }: SidebarProps) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [lang, setLangState] = useLang();
+  const [lang, setLangState] = useState(getLang());
 
   const isAdmin = user.role === "admin";
 
@@ -187,7 +187,7 @@ function Sidebar({ user, onLogout }: SidebarProps) {
 
           <div className="px-2">
             <button
-              onClick={() => setLangState(lang === "vi" ? "en" : "vi")}
+              onClick={() => { const newLang = lang === "vi" ? "en" : "vi"; setLang(newLang); setLangState(newLang); }}
               className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md hover:bg-sidebar-accent/50 transition-colors text-[11px] text-sidebar-foreground/60 mb-1"
               title={lang === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"}
             >

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "37ee03c9-6d0b-46f7-b9f3-eb4bbd6c6c99",
+    "name": "DHG - 7/4/2026",
+    "ticker": "DHG",
+    "report_type": "Parent",
+    "years": [
+      "2024",
+      "2023",
+      "2022"
+    ],
+    "comparisons": [
+      "AGP",
+      "PBC"
+    ],
+    "percentile_low": 25,
+    "percentile_high": 75,
+    "user_id": "admin-001",
+    "created_at": "2026-04-07T09:29:34.389Z"
+  }
+]

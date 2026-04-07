@@ -1,45 +1,26 @@
-import { useState, useCallback } from "react";
-
 export type Lang = "vi" | "en";
 
-// Global language state
+// Simple global language state
 let currentLang: Lang = "vi";
-let listeners: (() => void)[] = [];
 
 export function getLang(): Lang { return currentLang; }
-export function setLang(lang: Lang) { 
-  currentLang = lang; 
-  listeners.forEach(l => l());
-}
+export function setLang(lang: Lang) { currentLang = lang; }
 
+// Simple hook - components that need reactivity should use this with their own state
 export function useLang(): [Lang, (lang: Lang) => void] {
-  const [, forceUpdate] = useState(0);
-  const update = useCallback((lang: Lang) => {
-    setLang(lang);
-    forceUpdate(n => n + 1);
-  }, []);
-  
-  // Subscribe to changes
-  useState(() => {
-    const listener = () => forceUpdate(n => n + 1);
-    listeners.push(listener);
-    return () => { listeners = listeners.filter(l => l !== listener); };
-  });
-  
-  return [currentLang, update];
+  // This is a simple wrapper - for reactivity, consuming components
+  // should manage their own re-render triggers
+  return [currentLang, (lang: Lang) => { currentLang = lang; }];
 }
 
 // Translation dictionary
 const translations: Record<string, Record<Lang, string>> = {
-  // Navigation
   "nav.analysis": { vi: "Phân tích", en: "Analysis" },
   "nav.dashboard": { vi: "Dashboard", en: "Dashboard" },
   "nav.newCompany": { vi: "Công ty mới", en: "New Company" },
   "nav.upload": { vi: "Tải dữ liệu", en: "Upload Data" },
   "nav.history": { vi: "Lịch sử", en: "History" },
   "nav.admin": { vi: "Quản trị", en: "Admin" },
-  
-  // Home page
   "home.title": { vi: "Phân tích rủi ro thuế", en: "Tax Risk Analysis" },
   "home.subtitle": { vi: "Chọn công ty niêm yết để phân tích các chỉ số rủi ro TIRA", en: "Select a listed company to analyze TIRA tax risk indicators" },
   "home.search": { vi: "Tìm kiếm công ty", en: "Search company" },
@@ -57,18 +38,10 @@ const translations: Record<string, Record<Lang, string>> = {
   "home.aiSuggest": { vi: "AI đề xuất", en: "AI Suggest" },
   "home.aiSuggestions": { vi: "AI đề xuất so sánh", en: "AI Suggested Comparisons" },
   "home.analyze": { vi: "Phân tích TIRA", en: "Run TIRA Analysis" },
-  
-  // Dashboard
   "dash.back": { vi: "Quay lại", en: "Back" },
   "dash.exportPptx": { vi: "Tải báo cáo (PPTX)", en: "Export (PPTX)" },
   "dash.aiReport": { vi: "Tạo báo cáo AI", en: "AI Report" },
   "dash.riskScore": { vi: "Điểm rủi ro (BQ)", en: "Risk Score (Avg)" },
-  "dash.rr1": { vi: "RR1 (ngưỡng cố định)", en: "RR1 (Threshold)" },
-  "dash.rr2": { vi: "RR2 (ngoài phân vị)", en: "RR2 (IQR)" },
-  "dash.safe": { vi: "An toàn", en: "Safe" },
-  "dash.noData": { vi: "Thiếu dữ liệu", en: "No Data" },
-  
-  // Tabs
   "tab.heatmap": { vi: "Bảng nhiệt", en: "Heatmap" },
   "tab.charts": { vi: "Biểu đồ", en: "Charts" },
   "tab.comparison": { vi: "So sánh", en: "Comparison" },
@@ -79,12 +52,8 @@ const translations: Record<string, Record<Lang, string>> = {
   "tab.scoring": { vi: "Tính điểm RR", en: "Risk Scoring" },
   "tab.financials": { vi: "Báo cáo TC", en: "Financials" },
   "tab.fsAnalysis": { vi: "Phân tích BCTC", en: "FS Analysis" },
-  
-  // Common
   "common.year": { vi: "Năm", en: "Year" },
   "common.all": { vi: "Tất cả", en: "All" },
-  "common.save": { vi: "Lưu", en: "Save" },
-  "common.export": { vi: "Xuất", en: "Export" },
   "common.risk": { vi: "Rủi ro", en: "Risk" },
   "common.safe": { vi: "An toàn", en: "Safe" },
   "common.median": { vi: "Trung vị", en: "Median" },
@@ -103,7 +72,6 @@ export function t(key: string): string {
   return entry[currentLang] || entry["vi"] || key;
 }
 
-// Financial statement line item names
 export const FS_LABELS: Record<string, Record<Lang, string>> = {
   "210": { vi: "Doanh thu thuần", en: "Net Revenue" },
   "211": { vi: "Giá vốn hàng bán", en: "COGS" },
@@ -135,6 +103,5 @@ export const FS_LABELS: Record<string, Record<Lang, string>> = {
   "1418": { vi: "LN chưa phân phối", en: "Retained Earnings" },
 };
 
-// Key financial line items for display (ordered)
 export const IS_KEYS = ["21", "22", "210", "211", "220", "221", "222", "223", "225", "226", "230", "250", "251", "252", "260"];
 export const BS_KEYS = ["1100", "1131", "1140", "1152", "1200", "1270", "1300", "1310", "1313", "1330", "1400", "1411", "1418"];

@@ -155,6 +155,25 @@ interface AnalysisResult {
   >;
 }
 
+const WEIGHT_FACTORS: Record<number, number> = { 1: 0.1, 2: 0.2, 3: 0.3, 4: 0.4, 5: 0.5, 6: 0.6, 7: 0.7, 8: 0.8, 9: 0.9, 10: 1.0 };
+const WEIGHT_LABELS_SCORING: Record<number, string> = {
+  10: "Rất cao", 9: "Rất cao", 8: "Cao", 7: "Cao",
+  6: "Trung bình", 5: "Trung bình", 4: "Thấp", 3: "Thấp",
+  2: "Rất thấp", 1: "Rất thấp",
+};
+const WEIGHT_COLORS_SCORING: Record<number, string> = {
+  1: "hsl(215, 20%, 60%)",
+  2: "hsl(215, 20%, 55%)",
+  3: "hsl(142, 55%, 40%)",
+  4: "hsl(142, 55%, 35%)",
+  5: "hsl(45, 90%, 50%)",
+  6: "hsl(45, 90%, 45%)",
+  7: "hsl(25, 90%, 50%)",
+  8: "hsl(25, 90%, 45%)",
+  9: "hsl(0, 72%, 48%)",
+  10: "hsl(0, 72%, 40%)",
+};
+
 const GROUP_SHORT: Record<string, string> = {
   "CRITICAL RED LINES": "Lằn ranh đỏ",
   "DOANH THU - LỢI NHUẬN - THUẾ": "DT-LN-Thuế",
@@ -574,7 +593,7 @@ export default function Dashboard() {
   const [isExporting, setIsExporting] = useState(false);
   const [aiReportOpen, setAiReportOpen] = useState(false);
   const [aiReportTypes, setAiReportTypes] = useState<string[]>(["financial", "tax"]);
-  const [aiReportYears, setAiReportYears] = useState<string[]>(years);
+  const [aiReportYears, setAiReportYears] = useState<string[]>([]);
   const [aiModel, setAiModel] = useState("anthropic");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiReportContent, setAiReportContent] = useState<string | null>(null);
@@ -629,6 +648,13 @@ export default function Dashboard() {
   const percentileLow = Number(params.get("p_low")) || 25;
   const percentileHigh = Number(params.get("p_high")) || 75;
 
+  // Sync aiReportYears with years when available
+  useEffect(() => {
+    if (years.length > 0 && aiReportYears.length === 0) {
+      setAiReportYears(years);
+    }
+  }, [years, aiReportYears.length]);
+
   const customResult = isCustom ? (window as any).__customResult as AnalysisResult | undefined : undefined;
 
   const { data: fetchedResult, isLoading } = useQuery<AnalysisResult>({
@@ -650,10 +676,10 @@ export default function Dashboard() {
   const result = isCustom ? customResult : fetchedResult;
 
   // Auto-save analysis when result loads (for editors/admins)
-  const API_BASE = ("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__");
   useEffect(() => {
     if (result && canEdit && ticker) {
-      fetch(`${API_BASE}/api/analyses/save`, {
+      const base = ("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__");
+      fetch(`${base}/api/analyses/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
         body: JSON.stringify({ ticker, report_type: reportType, years, comparisons, percentile_low: percentileLow, percentile_high: percentileHigh, name: `${ticker} - ${new Date().toLocaleDateString("vi-VN")}` }),
@@ -3747,24 +3773,6 @@ function RiskDiagramView({
 }
 
 /* ========== RISK SCORING EDITOR ========== */
-const WEIGHT_FACTORS: Record<number, number> = { 1: 0.1, 2: 0.2, 3: 0.3, 4: 0.4, 5: 0.5, 6: 0.6, 7: 0.7, 8: 0.8, 9: 0.9, 10: 1.0 };
-const WEIGHT_LABELS_SCORING: Record<number, string> = {
-  10: "Rất cao", 9: "Rất cao", 8: "Cao", 7: "Cao",
-  6: "Trung bình", 5: "Trung bình", 4: "Thấp", 3: "Thấp",
-  2: "Rất thấp", 1: "Rất thấp",
-};
-const WEIGHT_COLORS_SCORING: Record<number, string> = {
-  1: "hsl(215, 20%, 60%)",
-  2: "hsl(215, 20%, 55%)",
-  3: "hsl(142, 55%, 40%)",
-  4: "hsl(142, 55%, 35%)",
-  5: "hsl(45, 90%, 50%)",
-  6: "hsl(45, 90%, 45%)",
-  7: "hsl(25, 90%, 50%)",
-  8: "hsl(25, 90%, 45%)",
-  9: "hsl(0, 72%, 48%)",
-  10: "hsl(0, 72%, 40%)",
-};
 
 const INDICATOR_NAMES_SCORING: Record<string, string> = {
   "0.1": "Chi phí thuế / Doanh thu",
