@@ -177,7 +177,7 @@ async function callAnthropicModel(prompt: string, modelId: string): Promise<stri
   try {
     const msg = await anthropicClient.messages.create({
       model: modelId,
-      max_tokens: 4096,
+      max_tokens: 16384,
       messages: [{ role: "user", content: prompt }],
     });
     const block = msg.content[0];
@@ -196,7 +196,7 @@ async function callDeepSeekModel(prompt: string, modelId: string): Promise<strin
     const completion = await deepseekClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
+      max_tokens: 16384,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -212,7 +212,7 @@ async function callOpenAIModel(prompt: string, modelId: string): Promise<string>
     const completion = await openaiClient.chat.completions.create({
       model: modelId,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
+      max_tokens: 16384,
     });
     return completion.choices[0]?.message?.content || "";
   } catch (err: any) {
@@ -887,9 +887,9 @@ Chỉ trả lời JSON array, không giải thích.`;
         yearSummaries.push(`Năm ${year} (${risky.length} chỉ số rủi ro):\n${indSummary}`);
       }
       let allYearData = yearSummaries.join('\n\n');
-      // Truncate if too long (keep under 3000 chars for the data part)
-      if (allYearData.length > 3000) {
-        allYearData = allYearData.substring(0, 2997) + "...";
+      // Truncate if too long (keep under 6000 chars for the data part)
+      if (allYearData.length > 6000) {
+        allYearData = allYearData.substring(0, 5997) + "...";
       }
 
       // For backward compat: latest-year risky indicators (used in financial prompt)
@@ -914,33 +914,75 @@ Chỉ trả lời JSON array, không giải thích.`;
         if (rType === "financial") {
           prompt = `${langInstruction}
 
-Phân tích ngắn gọn tình hình tài chính công ty ${ticker} (${companyName}), năm ${reportYears.join(', ')}.
+Bạn là chuyên gia phân tích tài chính và tư vấn thuế. Viết báo cáo phân tích tài chính cho công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
 
 Số liệu chính (${latestYear}): ${financialSummary}
 
-Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
-1. Executive Summary (3-5 dòng)
-2. Các vấn đề tài chính nổi bật liên quan đến rủi ro thuế
-3. Mối liên hệ giữa các chỉ số tài chính và thuế
+Các chỉ số có rủi ro:
+${allYearData}
 
-KHÔNG phân tích chi tiết các điểm an toàn. Chỉ tập trung vào rủi ro và connections.`;
+Yêu cầu:
+- Xuất ra định dạng HTML chuẩn (dùng <h2>, <h3>, <p>, <ul>, <li>, <strong>, <table>)
+- Báo cáo dài 4-5 trang A4, chuyên nghiệp, sử dụng bullet points
+- Tập trung vào rủi ro và mối quan hệ giữa các chỉ số
+
+Cấu trúc báo cáo:
+<h2>1. Tóm tắt điều hành (Executive Summary)</h2>
+- Tổng quan rủi ro tài chính và thuế trong 3-5 bullet points
+- Đánh giá mức độ rủi ro chung
+
+<h2>2. Phân tích tình hình tài chính</h2>
+- Doanh thu và lợi nhuận: xu hướng, biến động bất thường
+- Cơ cấu tài sản và nợ: những điểm đáng lưu ý
+- Hiệu quả hoạt động: các vấn đề nổi bật
+
+<h2>3. Mối quan hệ giữa tài chính và rủi ro thuế</h2>
+- Phân tích các mối liên hệ (VD: DT tăng nhưng ETR giảm)
+- Các dấu hiệu cảnh báo từ số liệu tài chính
+
+<h2>4. Khuyến nghị</h2>
+- Các hành động cần thiết
+
+KHÔNG phân tích các điểm an toàn. Chỉ tập trung vào rủi ro.`;
         } else if (rType === "tax") {
           prompt = `${langInstruction}
 
-Phân tích rủi ro thuế công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
+Bạn là chuyên gia tư vấn thuế. Viết báo cáo phân tích rủi ro thuế TIRA cho công ty ${ticker} (${companyName}), các năm ${reportYears.join(', ')}.
 
 Dữ liệu chỉ số rủi ro theo từng năm:
 ${allYearData}
 
 Số liệu tài chính chính (${latestYear}): ${financialSummary}
 
-Yêu cầu: Viết bullet points, ngắn gọn, tập trung vào:
-1. Executive Summary: tổng quan rủi ro qua các năm (3-5 dòng)
-2. Phân tích từng chỉ số rủi ro theo năm: lý do, ý nghĩa, và xu hướng
-3. Kết nối giữa các rủi ro (ví dụ: DT tăng nhưng ETR giảm)
-4. Khuyến nghị hành động (3-5 bullet points)
+Yêu cầu:
+- Xuất ra định dạng HTML chuẩn (dùng <h2>, <h3>, <p>, <ul>, <li>, <strong>, <table>, <em>)
+- Báo cáo dài 4-5 trang A4, chuyên nghiệp, dùng bullet points
+- Tập trung vào rủi ro và mối quan hệ giữa các chỉ số
 
-KHÔNG phân tích chỉ số an toàn. Chỉ tập trung rủi ro. Viết tối đa 2000 từ.`;
+Cấu trúc báo cáo:
+<h2>1. Tóm tắt điều hành (Executive Summary)</h2>
+- Tổng quan mức độ rủi ro thuế của công ty
+- Các rủi ro trọng yếu nhất cần lưu ý
+- Xu hướng rủi ro qua các năm
+
+<h2>2. Phân tích Yếu tố rủi ro 1 (Ngưỡng cơ quan thuế)</h2>
+- Liệt kê và phân tích các chỉ số vượt ngưỡng CQT
+- Giải thích ý nghĩa và hậu quả tiềm tàng
+- Dùng bảng HTML nếu cần so sánh số liệu
+
+<h2>3. Phân tích Yếu tố rủi ro 2 (So sánh ngành)</h2>
+- Các chỉ số lệch xa phân vị ngành
+- So sánh với trung vị và phân tích xu hướng
+
+<h2>4. Mối quan hệ giữa các rủi ro</h2>
+- Phân tích cross-reference: VD doanh thu tăng nhưng ETR giảm, lợi nhuận giảm nhưng chi phí thuế tăng
+- Các pattern đáng ngờ từ góc nhìn cơ quan thuế
+
+<h2>5. Kết luận và khuyến nghị</h2>
+- Đánh giá mức độ rủi ro tổng thể
+- Các hành động cần thiết theo thứ tự ưu tiên
+
+KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn báo cáo.`;
         } else {
           // Unknown report type — skip gracefully
           continue;
