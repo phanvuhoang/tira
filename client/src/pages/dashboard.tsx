@@ -74,6 +74,16 @@ import {
 
 /* ========== HELPER: Markdown to HTML ========== */
 function simpleMarkdownToHtml(md: string): string {
+  if (!md) return "";
+  // If already HTML (starts with < tag), clean it up
+  if (md.trim().startsWith("<")) {
+    return md
+      .replace(/\n{3,}/g, '\n\n')  // Max 2 newlines
+      .replace(/<p>\s*<\/p>/g, '')  // Remove empty paragraphs
+      .replace(/```[\s\S]*?```/g, (match) => `<pre><code>${match.slice(3, -3)}</code></pre>`)
+      .trim();
+  }
+  // Convert markdown to HTML
   return md
     .replace(/^### (.*$)/gm, '<h3>$1</h3>')
     .replace(/^## (.*$)/gm, '<h2>$1</h2>')
@@ -81,45 +91,211 @@ function simpleMarkdownToHtml(md: string): string {
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/^- (.*$)/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+    .replace(/<\/ul>\s*<ul>/g, '')  // Merge adjacent ul
     .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br/>')
+    .replace(/\n/g, ' ')
     .replace(/^/, '<p>')
-    .replace(/$/, '</p>');
+    .replace(/$/, '</p>')
+    .replace(/<p>\s*<\/p>/g, '')  // Remove empty paragraphs
+    .replace(/<p>\s*(<h[123]>)/g, '$1')  // Fix p wrapping headers
+    .replace(/(<\/h[123]>)\s*<\/p>/g, '$1')
+    .trim();
 }
 
-/* ========== HELPER: Export AI report to Word ========== */
-function exportAiReportToWord(content: string, ticker: string) {
-  // Convert markdown to HTML for Word export
-  const html = content
-    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/^- (.*$)/gm, '<li>$1</li>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br/>');
-
+/* ========== HELPER: Export HTML report to DOCX ========== */
+function exportToDocx(htmlContent: string, filename: string) {
+  // Create a proper Word-compatible HTML document
   const fullHtml = `
-    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-    <head><meta charset="utf-8"><title>TIRA Report - ${ticker}</title>
-    <style>
-      body { font-family: 'Calibri', sans-serif; font-size: 11pt; line-height: 1.6; color: #333; }
-      h1 { font-size: 18pt; color: #028a39; border-bottom: 2px solid #028a39; padding-bottom: 6pt; }
-      h2 { font-size: 14pt; color: #1a2332; margin-top: 12pt; }
-      h3 { font-size: 12pt; color: #333; }
-      li { margin-left: 20pt; }
-      strong { color: #1a2332; }
-    </style></head>
-    <body><p>${html}</p></body></html>`;
+<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" 
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<!--[if gte mso 9]>
+<xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #333; margin: 2.5cm; }
+  h1 { font-size: 18pt; color: #028a39; border-bottom: 2pt solid #028a39; padding-bottom: 6pt; margin-top: 24pt; }
+  h2 { font-size: 14pt; color: #1a2332; margin-top: 18pt; margin-bottom: 6pt; }
+  h3 { font-size: 12pt; color: #333; margin-top: 12pt; }
+  p { margin: 6pt 0; }
+  ul { margin: 6pt 0 6pt 20pt; }
+  li { margin: 3pt 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12pt 0; }
+  th { border: 1pt solid #ccc; padding: 6pt 8pt; background-color: #f0f0f0; text-align: left; font-weight: bold; }
+  td { border: 1pt solid #ccc; padding: 6pt 8pt; }
+  strong { color: #1a2332; }
+  em { color: #666; }
+  .chart { margin: 12pt 0; }
+</style>
+</head>
+<body>
+${simpleMarkdownToHtml(htmlContent)}
+</body>
+</html>`;
 
-  const blob = new Blob([fullHtml], { type: 'application/msword' });
+  const blob = new Blob(['\ufeff' + fullHtml], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `TIRA_Report_${ticker}_${new Date().toISOString().slice(0, 10)}.doc`;
+  a.download = filename.endsWith('.docx') ? filename : filename + '.docx';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// Legacy alias
+function exportAiReportToWord(content: string, ticker: string) {
+  exportToDocx(content, `TIRA_Report_${ticker}_${new Date().toISOString().slice(0, 10)}`);
+}
+
+/* ========== HELPER: Export HTML report to PPTX ========== */
+async function exportReportToPptx(htmlContent: string, ticker: string) {
+  const pptxgenjs = await import("pptxgenjs");
+  const PptxGenJS = pptxgenjs.default;
+  const pptx = new PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+
+  // Parse HTML into sections
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${simpleMarkdownToHtml(htmlContent)}</div>`, 'text/html');
+  const sections = doc.querySelectorAll('h2');
+
+  // Title slide
+  const s1 = pptx.addSlide();
+  s1.background = { color: "1A2332" };
+  s1.addText("TIRA - Báo cáo Phân tích Rủi ro Thuế", { x: 0.8, y: 1.5, w: 8.5, h: 0.8, fontSize: 24, color: "FFFFFF", bold: true });
+  s1.addText(ticker, { x: 0.8, y: 2.5, w: 8.5, h: 0.5, fontSize: 18, color: "028A39" });
+
+  // One slide per H2 section
+  sections.forEach((h2) => {
+    const slide = pptx.addSlide();
+    const title = h2.textContent || "";
+    slide.addText(title, { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, bold: true, color: "1A2332" });
+
+    // Collect content until next H2
+    let content = "";
+    let el = h2.nextElementSibling;
+    while (el && el.tagName !== "H2") {
+      content += el.textContent + "\n";
+      el = el.nextElementSibling;
+    }
+
+    // Add content as text (simplified)
+    if (content.trim()) {
+      slide.addText(content.trim(), { x: 0.5, y: 1.0, w: 9, h: 5.5, fontSize: 11, color: "333333", valign: "top", wrap: true });
+    }
+  });
+
+  const blob = await pptx.write({ outputType: "blob" }) as Blob;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `TIRA_AI_Report_${ticker}.pptx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ========== HELPER: Generate SVG chart from chart data ========== */
+function generateChartSvg(chart: any): string {
+  const data = chart.data || [];
+  if (data.length === 0) return '';
+
+  const W = 600, H = 300, PAD = 60;
+  const chartW = W - PAD * 2;
+  const chartH = H - PAD * 2;
+
+  if (chart.type === "revenue_trend") {
+    const maxVal = Math.max(...data.map((d: any) => Math.max(Math.abs(d.revenue || 0), Math.abs(d.profit || 0), Math.abs(d.tax || 0))));
+    const scale = maxVal > 0 ? chartH / maxVal : 1;
+    const barW = chartW / data.length / 4;
+
+    let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="background:#fafafa;border:1px solid #e0e0e0;border-radius:8px;margin:16px 0">`;
+    // Y axis
+    svg += `<line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H-PAD}" stroke="#ccc"/>`;
+    // X axis
+    svg += `<line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD}" y2="${H-PAD}" stroke="#ccc"/>`;
+
+    data.forEach((d: any, i: number) => {
+      const x = PAD + (i + 0.5) * (chartW / data.length);
+      // Revenue bar
+      const rH = Math.abs(d.revenue || 0) * scale;
+      svg += `<rect x="${x - barW*1.5}" y="${H-PAD-rH}" width="${barW}" height="${rH}" fill="#028a39" rx="2"/>`;
+      // Profit bar
+      const pH = Math.abs(d.profit || 0) * scale;
+      svg += `<rect x="${x - barW*0.5}" y="${H-PAD-pH}" width="${barW}" height="${pH}" fill="#2563eb" rx="2"/>`;
+      // Tax bar
+      const tH = Math.abs(d.tax || 0) * scale;
+      svg += `<rect x="${x + barW*0.5}" y="${H-PAD-tH}" width="${barW}" height="${tH}" fill="#dc2626" rx="2"/>`;
+      // Year label
+      svg += `<text x="${x}" y="${H-PAD+16}" text-anchor="middle" font-size="11" fill="#666">${d.year}</text>`;
+    });
+
+    // Legend
+    svg += `<rect x="${PAD}" y="10" width="10" height="10" fill="#028a39"/>`;
+    svg += `<text x="${PAD+14}" y="19" font-size="10" fill="#333">Doanh thu</text>`;
+    svg += `<rect x="${PAD+80}" y="10" width="10" height="10" fill="#2563eb"/>`;
+    svg += `<text x="${PAD+94}" y="19" font-size="10" fill="#333">Lợi nhuận</text>`;
+    svg += `<rect x="${PAD+160}" y="10" width="10" height="10" fill="#dc2626"/>`;
+    svg += `<text x="${PAD+174}" y="19" font-size="10" fill="#333">Thuế</text>`;
+    svg += `</svg>`;
+    return svg;
+  }
+
+  if (chart.type === "ratios") {
+    const maxVal = Math.max(...data.map((d: any) => Math.max(parseFloat(d.gross_margin || 0), parseFloat(d.net_margin || 0), parseFloat(d.etr || 0))));
+    const scale = maxVal > 0 ? chartH / maxVal : 1;
+
+    let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="background:#fafafa;border:1px solid #e0e0e0;border-radius:8px;margin:16px 0">`;
+    svg += `<line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H-PAD}" stroke="#ccc"/>`;
+    svg += `<line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD}" y2="${H-PAD}" stroke="#ccc"/>`;
+
+    // Draw lines
+    const metrics = [
+      { key: "gross_margin", color: "#028a39", label: "Biên gộp %" },
+      { key: "net_margin", color: "#2563eb", label: "Biên ròng %" },
+      { key: "etr", color: "#dc2626", label: "ETR %" },
+    ];
+
+    metrics.forEach(metric => {
+      let path = "";
+      data.forEach((d: any, i: number) => {
+        const x = PAD + (i + 0.5) * (chartW / data.length);
+        const y = H - PAD - parseFloat(d[metric.key] || 0) * scale;
+        path += (i === 0 ? `M${x},${y}` : ` L${x},${y}`);
+        svg += `<circle cx="${x}" cy="${y}" r="4" fill="${metric.color}"/>`;
+        svg += `<text x="${x}" y="${y-8}" text-anchor="middle" font-size="9" fill="${metric.color}">${d[metric.key]}%</text>`;
+      });
+      svg += `<path d="${path}" fill="none" stroke="${metric.color}" stroke-width="2"/>`;
+    });
+
+    // X labels
+    data.forEach((d: any, i: number) => {
+      const x = PAD + (i + 0.5) * (chartW / data.length);
+      svg += `<text x="${x}" y="${H-PAD+16}" text-anchor="middle" font-size="11" fill="#666">${d.year}</text>`;
+    });
+
+    // Legend
+    metrics.forEach((m, i) => {
+      const lx = PAD + i * 100;
+      svg += `<line x1="${lx}" y1="15" x2="${lx+15}" y2="15" stroke="${m.color}" stroke-width="2"/>`;
+      svg += `<text x="${lx+18}" y="19" font-size="10" fill="#333">${m.label}</text>`;
+    });
+
+    svg += `</svg>`;
+    return svg;
+  }
+
+  return '';
 }
 
 interface TiraIndicator {
@@ -600,6 +776,7 @@ export default function Dashboard() {
   const [aiReportError, setAiReportError] = useState<string | null>(null);
   const [aiSaving, setAiSaving] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
+  const [aiIncludeCharts, setAiIncludeCharts] = useState(true);
   const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
   const [scoringYear, setScoringYear] = useState<string>("all");
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
@@ -922,7 +1099,29 @@ export default function Dashboard() {
         const parts: string[] = [];
         if (reports.financial) parts.push("# Báo cáo Phân tích Tài chính\n\n" + reports.financial);
         if (reports.tax) parts.push("# Báo cáo Phân tích Rủi ro Thuế\n\n" + reports.tax);
-        const reportContent = parts.join("\n\n---\n\n") || data.content || JSON.stringify(data);
+        let reportContent = parts.join("\n\n---\n\n") || data.content || JSON.stringify(data);
+        // Fetch chart data and append SVG charts if requested
+        if (aiIncludeCharts && reportContent) {
+          try {
+            const base = ("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__");
+            const chartRes = await fetch(`${base}/api/report-charts`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ticker, report_type: reportType, years: aiReportYears }),
+            });
+            const chartData = await chartRes.json();
+            if (chartData.charts && chartData.charts.length > 0) {
+              let chartHtml = '<h2>Đồ thị minh họa</h2>';
+              for (const chart of chartData.charts) {
+                chartHtml += `<h3>${chart.title}</h3>`;
+                chartHtml += generateChartSvg(chart);
+              }
+              reportContent += chartHtml;
+            }
+          } catch {
+            // Chart fetch failed silently
+          }
+        }
         setAiReportContent(reportContent);
         // Auto-save AI report for editors/admins (save as HTML for rich rendering)
         if (canEdit && reportContent) {
@@ -940,7 +1139,7 @@ export default function Dashboard() {
     } finally {
       setAiGenerating(false);
     }
-  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiReportYears, aiModel, canEdit]);
+  }, [result, ticker, reportType, years, comparisons, percentileLow, percentileHigh, aiReportTypes, aiReportYears, aiModel, canEdit, aiIncludeCharts]);
 
   const handleSaveAiReport = useCallback(async () => {
     if (!result || !aiReportContent) return;
@@ -1155,6 +1354,20 @@ export default function Dashboard() {
               </p>
             </div>
 
+            {/* Include charts checkbox */}
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
+                  checked={aiIncludeCharts}
+                  onCheckedChange={(checked) => setAiIncludeCharts(!!checked)}
+                />
+                <Label className="cursor-pointer text-sm">Kèm đồ thị minh họa</Label>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Thêm biểu đồ xu hướng và tỷ lệ tài chính vào báo cáo
+              </p>
+            </div>
+
             {/* AI Model selector */}
             <div>
               <p className="text-sm font-semibold mb-2">Mô hình AI</p>
@@ -1204,11 +1417,11 @@ export default function Dashboard() {
             {aiReportContent && (
               <div className="space-y-3">
                 <div
-                  className="overflow-y-auto max-h-64 bg-accent/20 rounded-lg p-4 text-sm prose prose-sm max-w-none"
+                  className="overflow-y-auto max-h-64 bg-accent/20 rounded-lg p-4 text-sm prose prose-sm max-w-none [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-primary [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:mb-2 [&_p]:leading-relaxed [&_ul]:my-2 [&_li]:mb-1 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:p-2 [&_th]:bg-accent [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:p-2 [&_strong]:text-foreground"
                   data-testid="ai-report-content"
                   dangerouslySetInnerHTML={{ __html: simpleMarkdownToHtml(aiReportContent) }}
                 />
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     size="sm"
@@ -1227,12 +1440,22 @@ export default function Dashboard() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => exportAiReportToWord(aiReportContent, ticker)}
+                    onClick={() => exportToDocx(aiReportContent, `TIRA_Report_${ticker}`)}
                     data-testid="button-export-ai-word"
                     className="gap-2"
                   >
                     <FileText className="w-4 h-4" />
                     Xuất Word
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportReportToPptx(aiReportContent, ticker)}
+                    data-testid="button-export-ai-pptx"
+                    className="gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Xuất PPTX
                   </Button>
                 </div>
               </div>

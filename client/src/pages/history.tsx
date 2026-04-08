@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
   ChevronDown,
@@ -17,8 +18,128 @@ import {
   AlertCircle,
   BarChart2,
   ExternalLink,
+  Download,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+
+/* ========== HELPER: Markdown to HTML ========== */
+function simpleMarkdownToHtml(md: string): string {
+  if (!md) return "";
+  if (md.trim().startsWith("<")) {
+    return md
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/<p>\s*<\/p>/g, '')
+      .trim();
+  }
+  return md
+    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^- (.*$)/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+    .replace(/<\/ul>\s*<ul>/g, '')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, ' ')
+    .replace(/^/, '<p>')
+    .replace(/$/, '</p>')
+    .replace(/<p>\s*<\/p>/g, '')
+    .replace(/<p>\s*(<h[123]>)/g, '$1')
+    .replace(/(<\/h[123]>)\s*<\/p>/g, '$1')
+    .trim();
+}
+
+/* ========== HELPER: Export HTML report to DOCX ========== */
+function exportToDocx(htmlContent: string, filename: string) {
+  const fullHtml = `
+<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" 
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<!--[if gte mso 9]>
+<xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #333; margin: 2.5cm; }
+  h1 { font-size: 18pt; color: #028a39; border-bottom: 2pt solid #028a39; padding-bottom: 6pt; margin-top: 24pt; }
+  h2 { font-size: 14pt; color: #1a2332; margin-top: 18pt; margin-bottom: 6pt; }
+  h3 { font-size: 12pt; color: #333; margin-top: 12pt; }
+  p { margin: 6pt 0; }
+  ul { margin: 6pt 0 6pt 20pt; }
+  li { margin: 3pt 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12pt 0; }
+  th { border: 1pt solid #ccc; padding: 6pt 8pt; background-color: #f0f0f0; text-align: left; font-weight: bold; }
+  td { border: 1pt solid #ccc; padding: 6pt 8pt; }
+  strong { color: #1a2332; }
+  em { color: #666; }
+</style>
+</head>
+<body>
+${simpleMarkdownToHtml(htmlContent)}
+</body>
+</html>`;
+
+  const blob = new Blob(['\ufeff' + fullHtml], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.docx') ? filename : filename + '.docx';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ========== HELPER: Export HTML report to PPTX ========== */
+async function exportReportToPptx(htmlContent: string, ticker: string) {
+  const pptxgenjs = await import("pptxgenjs");
+  const PptxGenJS = pptxgenjs.default;
+  const pptx = new PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${simpleMarkdownToHtml(htmlContent)}</div>`, 'text/html');
+  const sections = doc.querySelectorAll('h2');
+
+  // Title slide
+  const s1 = pptx.addSlide();
+  s1.background = { color: "1A2332" };
+  s1.addText("TIRA - Báo cáo Phân tích Rủi ro Thuế", { x: 0.8, y: 1.5, w: 8.5, h: 0.8, fontSize: 24, color: "FFFFFF", bold: true });
+  s1.addText(ticker, { x: 0.8, y: 2.5, w: 8.5, h: 0.5, fontSize: 18, color: "028A39" });
+
+  // One slide per H2 section
+  sections.forEach((h2) => {
+    const slide = pptx.addSlide();
+    const title = h2.textContent || "";
+    slide.addText(title, { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, bold: true, color: "1A2332" });
+
+    let content = "";
+    let el = h2.nextElementSibling;
+    while (el && el.tagName !== "H2") {
+      content += el.textContent + "\n";
+      el = el.nextElementSibling;
+    }
+
+    if (content.trim()) {
+      slide.addText(content.trim(), { x: 0.5, y: 1.0, w: 9, h: 5.5, fontSize: 11, color: "333333", valign: "top", wrap: true });
+    }
+  });
+
+  const blob = await pptx.write({ outputType: "blob" }) as Blob;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `TIRA_AI_Report_${ticker}.pptx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 interface SavedReport {
   id: number | string;
@@ -259,16 +380,29 @@ export default function ReportHistory() {
                     {/* Expanded content */}
                     {isExpanded && report.content && (
                       <div className="mt-4 border-t border-border/50 pt-4">
-                        <div
-                          className="prose prose-sm max-w-none text-sm text-foreground/90 overflow-y-auto max-h-[500px] bg-accent/20 rounded-lg p-4"
-                          data-testid={`report-content-${report.id}`}
-                        >
-                          {report.content.includes('<') ? (
-                            <div dangerouslySetInnerHTML={{ __html: report.content }} className="prose prose-sm max-w-none" />
-                          ) : (
-                            <MarkdownContent content={report.content} />
-                          )}
+                        <div className="flex gap-2 mb-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => exportToDocx(report.content!, report.name || `TIRA_Report_${report.ticker}`)}
+                          >
+                            <FileText className="w-4 h-4 mr-1" />
+                            Xuất Word
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => exportReportToPptx(report.content!, report.ticker)}
+                          >
+                            <Download className="w-4 h-4 mr-1" />
+                            Xuất PPTX
+                          </Button>
                         </div>
+                        <div
+                          className="prose prose-sm max-w-none text-sm text-foreground/90 overflow-y-auto max-h-[500px] bg-accent/20 rounded-lg p-4 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-primary [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:mb-2 [&_p]:leading-relaxed [&_ul]:my-2 [&_li]:mb-1 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:p-2 [&_th]:bg-accent [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:p-2 [&_strong]:text-foreground"
+                          data-testid={`report-content-${report.id}`}
+                          dangerouslySetInnerHTML={{ __html: simpleMarkdownToHtml(report.content) }}
+                        />
                       </div>
                     )}
 

@@ -1063,15 +1063,19 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
       }
     }
 
-    // Return list sorted newest first, without heavy content field
-    const list = filteredReports
+    // Return list sorted newest first, without heavy content field but with has_content flag
+    const items = filteredReports
       .slice()
       .sort(
         (a, b) =>
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       )
-      .map(({ content: _content, ...rest }) => rest);
-    res.json(list);
+      .map(r => ({
+        ...r,
+        has_content: !!r.content && r.content.length > 0,
+        content: undefined, // Don't send content in list
+      }));
+    res.json(items);
   });
 
   // Get a specific report
@@ -1081,6 +1085,42 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
       return res.status(404).json({ error: "Report not found" });
     }
     res.json(record);
+  });
+
+  // Chart data for AI reports
+  app.post("/api/report-charts", (req: Request, res: Response) => {
+    const { ticker, report_type, years } = req.body;
+
+    // Get financial data for trend charts
+    const finData = storage.getFinancialData(ticker, report_type);
+    if (!finData) return res.json({ charts: [] });
+
+    const charts: any[] = [];
+
+    // Chart 1: Revenue & Profit trend
+    const revenueTrend = years.map((y: string) => ({
+      year: y,
+      revenue: finData[y]?.["210"] || 0,
+      profit: finData[y]?.["260"] || 0,
+      tax: finData[y]?.["251"] || 0,
+    })).reverse();
+    charts.push({ type: "revenue_trend", title: "Xu hướng Doanh thu - Lợi nhuận - Thuế", data: revenueTrend });
+
+    // Chart 2: Key ratios
+    const ratios = years.map((y: string) => {
+      const rev = finData[y]?.["210"] || 1;
+      const pbt = finData[y]?.["250"] || 0;
+      const tax = finData[y]?.["251"] || 0;
+      return {
+        year: y,
+        gross_margin: ((finData[y]?.["220"] || 0) / rev * 100).toFixed(1),
+        net_margin: ((finData[y]?.["260"] || 0) / rev * 100).toFixed(1),
+        etr: (Math.abs(tax) / Math.abs(pbt || 1) * 100).toFixed(1),
+      };
+    }).reverse();
+    charts.push({ type: "ratios", title: "Biên lợi nhuận và ETR", data: ratios });
+
+    res.json({ charts });
   });
 
   // Delete a report
