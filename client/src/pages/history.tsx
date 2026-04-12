@@ -89,11 +89,11 @@ ${simpleMarkdownToHtml(htmlContent)}
 </body>
 </html>`;
 
-  const blob = new Blob(['\ufeff' + fullHtml], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const blob = new Blob(['\ufeff' + fullHtml], { type: 'application/msword' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.endsWith('.docx') ? filename : filename + '.docx';
+  a.download = filename.endsWith('.doc') ? filename : filename + '.doc';
   a.click();
   URL.revokeObjectURL(url);
 }
