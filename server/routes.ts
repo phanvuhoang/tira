@@ -1013,10 +1013,10 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
   // Save a report
   app.post("/api/reports/save", (req: Request, res: Response) => {
     try {
-      const { name, ticker, date, type, content, analysis_params } = req.body;
+      const { name, ticker, date, type, report_type, content, analysis_params } = req.body;
 
-      if (!ticker || !content) {
-        return res.status(400).json({ error: "Missing required fields: ticker, content" });
+      if (!ticker) {
+        return res.status(400).json({ error: "Missing required field: ticker" });
       }
 
       // Extract user if authenticated
@@ -1036,7 +1036,7 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
           }`,
         ticker,
         created_at: new Date().toISOString(),
-        report_type: type || "financial",
+        report_type: type || report_type || "financial",
         content,
         analysis_params: analysis_params || {},
         user_id: userId,

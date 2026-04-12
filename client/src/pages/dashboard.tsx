@@ -1933,6 +1933,28 @@ function HeatmapView({ result, percentileLow, percentileHigh }: { result: Analys
 }
 
 /* ========== CHARTS VIEW ========== */
+const CustomRadarTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.[0]) return null;
+  const data = payload[0].payload;
+  return (
+    <div className="bg-card border border-border rounded-lg p-3 shadow-lg text-xs max-w-xs">
+      <p className="font-semibold">{data.fullGroup || data.group}</p>
+      <p>Điểm rủi ro: <strong>{data.score.toFixed(0)}/100</strong></p>
+      <p className="text-muted-foreground">Tính trên thang 0-100, dựa trên severity × weight</p>
+      {data.indicators && (
+        <div className="mt-2 space-y-1">
+          <p className="font-medium">Chi tiết chỉ số:</p>
+          {data.indicators.map((ind: any) => (
+            <p key={ind.id} style={{ color: ind.risk === "red" ? "hsl(0,72%,48%)" : ind.risk === "yellow" ? "hsl(45,90%,45%)" : "hsl(142,55%,40%)" }}>
+              {ind.id} {ind.name}: {ind.riskLabel}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 function ChartsView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const latestYear = target.years[0];
@@ -1959,6 +1981,9 @@ function ChartsView({ result }: { result: AnalysisResult }) {
   const radarData = useMemo(() => {
     const groupScores = new Map<string, number[]>();
     const sortedYears = [...radarYears].sort((a, b) => Number(b) - Number(a));
+    // Collect latest-year indicators per group for tooltip detail
+    const latestRadarYear = sortedYears[0];
+    const latestGroupInds = new Map<string, Array<{ id: string; name: string; risk: string; riskLabel: string }>>(); 
 
     sortedYears.forEach((year, idx) => {
       const yearInds = target.indicators[year] || [];
@@ -1969,6 +1994,14 @@ function ChartsView({ result }: { result: AnalysisResult }) {
         else if (ind.risk_level === "yellow") list.push(1);
         else if (ind.risk_level === "green") list.push(0);
         groups.set(ind.group, list);
+        // Build per-indicator detail for latest year
+        if (year === latestRadarYear) {
+          const risk = ind.risk_level === "red" || (ind as any).risk_level_1 === "red" ? "red" : ind.risk_level === "yellow" ? "yellow" : "green";
+          const riskLabel = risk === "red" ? "Rủi ro cao" : risk === "yellow" ? "Cần chú ý" : "An toàn";
+          const arr = latestGroupInds.get(ind.group) || [];
+          arr.push({ id: ind.id, name: ind.name, risk, riskLabel });
+          latestGroupInds.set(ind.group, arr);
+        }
       }
       const yw = sortedYears.length - idx;
       Array.from(groups.entries()).forEach(([group, scores]) => {
@@ -1982,7 +2015,9 @@ function ChartsView({ result }: { result: AnalysisResult }) {
     const totalYearWeight = sortedYears.reduce((acc, _, idx) => acc + (sortedYears.length - idx), 0);
     return Array.from(groupScores.entries()).map(([group, weightedScores]) => ({
       group: GROUP_SHORT[group] || group,
+      fullGroup: group,
       score: totalYearWeight > 0 ? weightedScores.reduce((a, b) => a + b, 0) / totalYearWeight : 0,
+      indicators: latestGroupInds.get(group) || [],
     }));
   }, [radarYears, target]);
 
@@ -2116,13 +2151,7 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                       fillOpacity={0.2}
                       strokeWidth={2}
                     />
-                    <RechartsTooltip
-                      contentStyle={{
-                        borderRadius: "8px",
-                        border: "1px solid hsl(214, 14%, 89%)",
-                        fontSize: "12px",
-                      }}
-                    />
+                    <RechartsTooltip content={<CustomRadarTooltip />} />
                   </RadarChart>
                 ) : (
                   <BarChart
@@ -2229,11 +2258,11 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                   />
                   <YAxis fontSize={12} />
                   <RechartsTooltip
-                    contentStyle={{
-                      borderRadius: "8px",
-                      border: "1px solid hsl(214, 14%, 89%)",
-                      fontSize: "12px",
-                    }}
+                    contentStyle={{ borderRadius: "8px", border: "1px solid hsl(214,14%,89%)", fontSize: "12px", maxWidth: "300px" }}
+                    formatter={(value: any, name: string) => [
+                      typeof value === "number" ? value.toFixed(4) : value,
+                      name,
+                    ]}
                   />
                   <Legend iconSize={10} wrapperStyle={{ fontSize: "11px" }} />
                   {trendData.map((trend, i) => {
@@ -4032,20 +4061,32 @@ function calcRiskSeverity(
   pHigh: number | null
 ): number {
   if (riskLevel === "gray" || riskLevel === "green" || companyValue === null) return 0;
-  // red
+  // riskLevel === "red"
   if (median !== null && pLow !== null && pHigh !== null) {
     const iqr = Math.abs(pHigh - pLow);
-    if (iqr === 0) return 3;
-    let deviation = 0;
-    if (companyValue < pLow) deviation = Math.abs(pLow - companyValue) / iqr;
-    else if (companyValue > pHigh) deviation = Math.abs(companyValue - pHigh) / iqr;
-    if (deviation <= 0.25) return 1;
-    if (deviation <= 0.5) return 2;
-    if (deviation <= 1.0) return 3;
-    if (deviation <= 2.0) return 4;
-    return 5;
+    if (iqr === 0) return 4; // Default high if no spread
+
+    // Calculate standard deviations from median
+    const approxStdDev = iqr / 1.35;
+    let dist = 0;
+    if (companyValue < pLow) dist = Math.abs(pLow - companyValue);
+    else if (companyValue > pHigh) dist = Math.abs(companyValue - pHigh);
+    else dist = Math.abs(companyValue - median); // Even within range but flagged red
+
+    const stdDevs = approxStdDev > 0 ? dist / approxStdDev : 1;
+
+    // More aggressive scale: each std dev = +1 severity, starting at 2
+    // 0 std dev (at boundary) = 2 (already risky since flagged red)
+    // 0.5 std dev = 3
+    // 1 std dev = 4
+    // 1.5+ std dev = 5
+    if (stdDevs <= 0.1) return 2; // Just outside range = already moderate
+    if (stdDevs <= 0.5) return 3;
+    if (stdDevs <= 1.0) return 4;
+    return 5; // > 1 std dev from range = very high
   }
-  return 3; // default moderate
+  // Fallback: if flagged red but no IQR data, default HIGH
+  return 4;
 }
 
 function calcCompositeScore(
@@ -4054,19 +4095,51 @@ function calcCompositeScore(
 ): number {
   let totalWeighted = 0;
   let maxWeighted = 0;
+  let maxSingleRisk = 0; // Track highest individual risk
+  let criticalRiskCount = 0; // Count critical red line risks
+
   for (const ind of indicators) {
     const w = weights[ind.id] ?? 5;
     const r1 = (ind as any).risk_level_1 || ind.risk_level || "gray";
     const r2 = (ind as any).risk_level_2 || "gray";
     const sev1 = calcRiskSeverity(r1, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
     const sev2 = calcRiskSeverity(r2, ind.company_value, (ind as any).industry_median, (ind as any).industry_p_low, (ind as any).industry_p_high);
-    // Only count indicators that have risk (sev > 0)
+
     if (sev1 === 0 && sev2 === 0) continue;
+
     const totalSev = sev1 + sev2; // 0-10
-    totalWeighted += totalSev * w;
+    const weighted = totalSev * w;
+    totalWeighted += weighted;
     maxWeighted += 10 * w;
+
+    // Track max single risk
+    const singleRisk = totalSev * w / 10; // normalized 0-10 scale
+    if (singleRisk > maxSingleRisk) maxSingleRisk = singleRisk;
+
+    // Count critical risks (group "CRITICAL RED LINES" = ids starting with "0.")
+    if (ind.id.startsWith("0.") && (sev1 > 0 || sev2 > 0)) {
+      criticalRiskCount++;
+    }
   }
-  return maxWeighted > 0 ? Math.round((totalWeighted / maxWeighted) * 100) : 0;
+
+  if (maxWeighted === 0) return 0;
+
+  let score = Math.round((totalWeighted / maxWeighted) * 100);
+
+  // Critical boost: if any Critical Red Line has risk, minimum score = 30
+  if (criticalRiskCount > 0) {
+    score = Math.max(score, 30);
+  }
+  // If 2+ Critical Red Lines have risk, minimum = 50
+  if (criticalRiskCount >= 2) {
+    score = Math.max(score, 50);
+  }
+  // If highest single indicator risk is very high (weight * severity > 70% of max), boost
+  if (maxSingleRisk > 7) {
+    score = Math.max(score, 60);
+  }
+
+  return Math.min(score, 100);
 }
 
 function RiskScoringEditor({

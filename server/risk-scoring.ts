@@ -82,32 +82,26 @@ export function calcRiskSeverity(
 ): number {
   if (riskLevel === "gray" || companyValue === null) return 0;
   if (riskLevel === "green") return 0;
-  // riskLevel === "red"
 
-  // For RR1: binary (threshold breached or not) → severity based on how far beyond
-  // For RR2: distance from IQR
-  // Generic approach: measure deviation
   if (median !== null && pLow !== null && pHigh !== null) {
     const iqr = Math.abs(pHigh - pLow);
-    if (iqr === 0) return 3; // Default moderate if no spread
+    if (iqr === 0) return 4;
 
-    let deviation = 0;
-    if (companyValue < pLow) {
-      deviation = Math.abs(pLow - companyValue) / iqr;
-    } else if (companyValue > pHigh) {
-      deviation = Math.abs(companyValue - pHigh) / iqr;
-    }
+    const approxStdDev = iqr / 1.35;
+    let dist = 0;
+    if (companyValue < pLow) dist = Math.abs(pLow - companyValue);
+    else if (companyValue > pHigh) dist = Math.abs(companyValue - pHigh);
+    else dist = Math.abs(companyValue - median);
 
-    // Map deviation to 1-5 scale
-    if (deviation <= 0.25) return 1;
-    if (deviation <= 0.5) return 2;
-    if (deviation <= 1.0) return 3;
-    if (deviation <= 2.0) return 4;
+    const stdDevs = approxStdDev > 0 ? dist / approxStdDev : 1;
+
+    if (stdDevs <= 0.1) return 2;
+    if (stdDevs <= 0.5) return 3;
+    if (stdDevs <= 1.0) return 4;
     return 5;
   }
 
-  // Fallback: if red, default severity 3
-  return 3;
+  return 4; // Default high for flagged red without IQR data
 }
 
 // Calculate composite risk score for one year
@@ -166,11 +160,15 @@ export function calculateYearScore(
     breakdown.push({ id: ind.id, weight: iw, rr1_severity: rr1_sev, rr2_severity: rr2_sev, total_severity: total_sev, weighted_score: weighted });
   }
 
-  return {
-    score: maxWeighted > 0 ? Math.round((totalWeighted / maxWeighted) * 100) : 0,
-    maxScore: maxWeighted,
-    breakdown,
-  };
+  // Critical boost
+  let criticalCount = 0;
+  for (const b of breakdown) {
+    if (b.id.startsWith("0.") && b.total_severity > 0) criticalCount++;
+  }
+  let score = maxWeighted > 0 ? Math.round((totalWeighted / maxWeighted) * 100) : 0;
+  if (criticalCount > 0) score = Math.max(score, 30);
+  if (criticalCount >= 2) score = Math.max(score, 50);
+  return { score: Math.min(score, 100), maxScore: maxWeighted, breakdown };
 }
 
 // Calculate multi-year weighted average score
