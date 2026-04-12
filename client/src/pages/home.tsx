@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search,
   Building2,
@@ -54,7 +55,13 @@ export default function Home() {
   const [showCompSearch, setShowCompSearch] = useState(false);
   const [percentileLow, setPercentileLow] = useState(25);
   const [percentileHigh, setPercentileHigh] = useState(75);
-  const [aiSuggestions, setAiSuggestions] = useState<Company[]>([]);
+  const [aiSuggestions, setAiSuggestions] = useState<Array<{
+    ma_ck: string;
+    ten_tv: string;
+    nganh_2?: string;
+    relevance?: string;
+    reason?: string;
+  }>>([]);
   const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
 
   // Search companies
@@ -549,28 +556,53 @@ export default function Home() {
                     </Button>
                   </div>
                   {aiSuggestions.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {aiSuggestions.map((c) => (
-                        <Tooltip key={c.ma_ck}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant={comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck) ? "default" : "ghost"}
-                              size="sm"
-                              className="h-auto text-xs px-2 py-1"
-                              onClick={() => toggleComparison(c.ma_ck)}
-                              data-testid={`ai-suggest-${c.ma_ck}`}
-                            >
-                              {comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck) ? (
-                                <Check className="w-3 h-3 mr-1" />
-                              ) : (
-                                <Plus className="w-3 h-3 mr-1" />
-                              )}
-                              {c.ma_ck}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{c.ten_tv}</TooltipContent>
-                        </Tooltip>
-                      ))}
+                    <div className="mt-3">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="border-b border-border">
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground w-8">Chọn</th>
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Mã CK</th>
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Tên công ty</th>
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Ngành</th>
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Phù hợp</th>
+                              <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Lý do</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {aiSuggestions.map(c => {
+                              const isSelected = !!comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck);
+                              const relevanceColor = c.relevance === "cao" ? "text-green-600" : c.relevance === "thấp" ? "text-orange-500" : "text-yellow-600";
+                              return (
+                                <tr key={c.ma_ck} className="border-b border-border/50 hover:bg-accent/30">
+                                  <td className="py-1.5 px-2">
+                                    <Checkbox
+                                      checked={isSelected}
+                                      data-testid={`ai-suggest-${c.ma_ck}`}
+                                      onCheckedChange={(checked) => {
+                                        if (checked && !isSelected) {
+                                          setComparisonTickers(prev => [...prev, c as Company]);
+                                        } else if (!checked && isSelected) {
+                                          setComparisonTickers(prev => prev.filter(t => t.ma_ck !== c.ma_ck));
+                                        }
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="py-1.5 px-2 font-semibold text-xs">{c.ma_ck}</td>
+                                  <td className="py-1.5 px-2 text-xs">{c.ten_tv}</td>
+                                  <td className="py-1.5 px-2 text-xs text-muted-foreground">{c.nganh_2 || "-"}</td>
+                                  <td className={`py-1.5 px-2 text-xs font-medium ${relevanceColor}`}>
+                                    {c.relevance === "cao" ? "Cao" : c.relevance === "thấp" ? "Thấp" : "TB"}
+                                  </td>
+                                  <td className="py-1.5 px-2 text-xs text-muted-foreground max-w-[200px] truncate" title={c.reason}>
+                                    {c.reason || "-"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                   {!aiSuggestLoading && aiSuggestions.length === 0 && (

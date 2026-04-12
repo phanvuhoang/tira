@@ -737,19 +737,27 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     // Truncate ticker list if too long
     const truncatedList = tickerList.length > 3000 ? tickerList.substring(0, 3000) + "..." : tickerList;
 
-    const prompt = `Bạn là chuyên gia phân tích tài chính Việt Nam. Tìm 5-10 công ty niêm yết trên sàn chứng khoán Việt Nam (HOSE, HNX, UPCOM) có thể so sánh được với công ty ${ticker} - ${company_name} (ngành: ${industry}).
+    const prompt = `Bạn là chuyên gia phân tích chứng khoán Việt Nam. Tìm 10-15 công ty đã niêm yết trên sàn chứng khoán Việt Nam (HOSE, HNX, UPCOM) có thể so sánh với công ty ${ticker} - ${company_name} (ngành: ${industry}).
 
-Các công ty so sánh nên:
-- Cùng ngành hoặc hoạt động kinh doanh tương đồng
-- Có quy mô tương đương hoặc là đối thủ cạnh tranh
-- Có dữ liệu tài chính công khai
+Tìm kiếm từ các nguồn:
+- congbothongtin.ssc.gov.vn
+- cafef.vn
+- vietstock.vn
 
-Danh sách công ty trong database: ${truncatedList}
+Tiêu chí chọn:
+1. Cùng ngành hoặc hoạt động kinh doanh tương đồng nhất
+2. Quy mô tương đương hoặc đối thủ cạnh tranh trực tiếp
+3. Ưu tiên công ty trong cùng chuỗi giá trị
 
-Trả lời CHÍNH XÁC theo format JSON array, chỉ bao gồm mã CK có trong danh sách trên:
-["MÃ1", "MÃ2", "MÃ3", ...]
+Danh sách mã CK trong database (chỉ chọn từ danh sách này): ${truncatedList}
 
-Chỉ trả lời JSON array, không giải thích.`;
+Trả lời CHÍNH XÁC theo format JSON array, mỗi phần tử gồm ticker, relevance (cao/trung bình/thấp), và reason:
+[
+  {"ticker": "MÃ1", "relevance": "cao", "reason": "Cùng ngành sản xuất dược phẩm, đối thủ cạnh tranh trực tiếp"},
+  {"ticker": "MÃ2", "relevance": "trung bình", "reason": "Cùng lĩnh vực chăm sóc sức khỏe, quy mô tương đương"}
+]
+
+Chỉ trả lời JSON array, không giải thích thêm.`;
 
     try {
       let response = "";
@@ -758,20 +766,20 @@ Chỉ trả lời JSON array, không giải thích.`;
         const completion = await openaiClient.chat.completions.create({
           model: OPENAI_MODEL,
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 500,
+          max_tokens: 1500,
         });
         response = completion.choices[0]?.message?.content || "[]";
       } else if (deepseekClient) {
         const completion = await deepseekClient.chat.completions.create({
           model: DEEPSEEK_MODEL,
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 500,
+          max_tokens: 1500,
         });
         response = completion.choices[0]?.message?.content || "[]";
       } else if (anthropicClient) {
         const msg = await anthropicClient.messages.create({
           model: ANTHROPIC_MODEL,
-          max_tokens: 500,
+          max_tokens: 1500,
           messages: [{ role: "user", content: prompt }],
         });
         const block = msg.content[0];
@@ -780,19 +788,29 @@ Chỉ trả lời JSON array, không giải thích.`;
         return res.status(400).json({ error: "Không có AI API key nào được cấu hình" });
       }
 
-      // Parse response - extract JSON array
+      // Parse response
       const match = response.match(/\[[\s\S]*\]/);
       if (!match) return res.json({ suggestions: [] });
 
-      const suggestedTickers: string[] = JSON.parse(match[0]);
+      let parsed: any[];
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch {
+        return res.json({ suggestions: [] });
+      }
 
-      // Validate: only return tickers that exist in database
-      const validSuggestions = suggestedTickers
-        .filter(t => allCompanies.some(c => c.ma_ck === t))
-        .filter(t => t !== ticker) // exclude target
-        .map(t => {
-          const company = allCompanies.find(c => c.ma_ck === t);
-          return company ? { ma_ck: company.ma_ck, ten_tv: company.ten_tv, nganh_2: company.nganh_2 } : null;
+      const validSuggestions = parsed
+        .filter((item: any) => item.ticker && allCompanies.some(c => c.ma_ck === item.ticker))
+        .filter((item: any) => item.ticker !== ticker)
+        .map((item: any) => {
+          const company = allCompanies.find(c => c.ma_ck === item.ticker);
+          return company ? {
+            ma_ck: company.ma_ck,
+            ten_tv: company.ten_tv,
+            nganh_2: company.nganh_2,
+            relevance: item.relevance || "trung bình",
+            reason: item.reason || "",
+          } : null;
         })
         .filter(Boolean);
 

@@ -47,6 +47,7 @@ import {
   Sparkles,
   Save,
   SlidersHorizontal,
+  ExternalLink,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -151,6 +152,41 @@ ${simpleMarkdownToHtml(htmlContent)}
   a.download = filename.endsWith('.docx') ? filename : filename + '.docx';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ========== HELPER: Open report in new browser tab ========== */
+function openReportInNewTab(htmlContent: string, title: string) {
+  const fullHtml = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #333; line-height: 1.6; }
+    h1 { color: #028a39; border-bottom: 2px solid #028a39; padding-bottom: 8px; }
+    h2 { color: #1a2332; margin-top: 24px; }
+    h3 { color: #555; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    th { border: 1px solid #ddd; padding: 8px 12px; background: #f5f5f5; text-align: left; }
+    td { border: 1px solid #ddd; padding: 8px 12px; }
+    ul { margin: 8px 0; }
+    li { margin: 4px 0; }
+    strong { color: #1a2332; }
+    .no-print { margin-bottom: 20px; }
+    @media print { .no-print { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px;background:#028a39;color:white;border:none;border-radius:4px;cursor:pointer;margin-right:8px">In báo cáo</button>
+    <button onclick="window.close()" style="padding:8px 16px;background:#666;color:white;border:none;border-radius:4px;cursor:pointer">Đóng</button>
+  </div>
+  ${htmlContent}
+</body>
+</html>`;
+  const blob = new Blob([fullHtml], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
 }
 
 // Legacy alias
@@ -1457,6 +1493,15 @@ export default function Dashboard() {
                     <Download className="w-4 h-4" />
                     Xuất PPTX
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openReportInNewTab(simpleMarkdownToHtml(aiReportContent), `TIRA Report - ${ticker}`)}
+                    className="gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Mở trong trang mới
+                  </Button>
                 </div>
               </div>
             )}
@@ -2227,21 +2272,26 @@ function ChartsView({ result }: { result: AnalysisResult }) {
                 {(target.indicators[latestYear] || [])
                   .filter(i => !trendHiddenGroups.has(i.group))
                   .map(ind => (
-                    <button
-                      key={ind.id}
-                      className={`px-1.5 py-0.5 text-[10px] rounded border transition-opacity ${trendHiddenInds.has(ind.id) ? "opacity-40 border-border bg-background" : "border-primary/40 bg-primary/10"}`}
-                      onClick={() => {
-                        setTrendHiddenInds(prev => {
-                          const next = new Set(prev);
-                          if (next.has(ind.id)) next.delete(ind.id);
-                          else next.add(ind.id);
-                          return next;
-                        });
-                      }}
-                      title={ind.name}
-                    >
-                      {ind.id}
-                    </button>
+                    <Tooltip key={ind.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          className={`px-1.5 py-0.5 text-[10px] rounded border transition-opacity ${trendHiddenInds.has(ind.id) ? "opacity-40 border-border bg-background" : "border-primary/40 bg-primary/10"}`}
+                          onClick={() => {
+                            setTrendHiddenInds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(ind.id)) next.delete(ind.id);
+                              else next.add(ind.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          {ind.id}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        <p className="text-xs">{ind.name}</p>
+                      </TooltipContent>
+                    </Tooltip>
                   ))}
               </div>
             )}
