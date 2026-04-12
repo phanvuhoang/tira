@@ -555,7 +555,7 @@ export default function Home() {
                       {t("home.aiSuggest")}
                     </Button>
                   </div>
-                  {aiSuggestions.length > 0 && (
+                  {(aiSuggestions.length > 0 || comparisonTickers.length > 0) && (
                     <div className="mt-3">
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm border-collapse">
@@ -570,20 +570,45 @@ export default function Home() {
                             </tr>
                           </thead>
                           <tbody>
-                            {aiSuggestions.map(c => {
-                              const isSelected = !!comparisonTickers.find((ct) => ct.ma_ck === c.ma_ck);
-                              const relevanceColor = c.relevance === "cao" ? "text-green-600" : c.relevance === "thấp" ? "text-orange-500" : "text-yellow-600";
+                            {/* Already selected companies at the top */}
+                            {comparisonTickers.map(c => {
+                              const aiMatch = aiSuggestions.find(s => s.ma_ck === c.ma_ck);
                               return (
-                                <tr key={c.ma_ck} className="border-b border-border/50 hover:bg-accent/30">
+                                <tr key={`sel-${c.ma_ck}`} className="border-b border-border/50 bg-primary/5">
                                   <td className="py-1.5 px-2">
                                     <Checkbox
-                                      checked={isSelected}
+                                      checked={true}
+                                      onCheckedChange={() => {
+                                        setComparisonTickers(prev => prev.filter(t => t.ma_ck !== c.ma_ck));
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="py-1.5 px-2 font-semibold text-xs">{c.ma_ck}</td>
+                                  <td className="py-1.5 px-2 text-xs">{c.ten_tv}</td>
+                                  <td className="py-1.5 px-2 text-xs text-muted-foreground">{c.nganh_2 || "-"}</td>
+                                  <td className="py-1.5 px-2 text-xs font-medium text-green-600">
+                                    {aiMatch?.relevance === "cao" ? "Cao" : aiMatch?.relevance === "thấp" ? "Thấp" : aiMatch ? "TB" : "Đã chọn"}
+                                  </td>
+                                  <td className="py-1.5 px-2 text-xs text-muted-foreground max-w-[200px] truncate" title={aiMatch?.reason || "Công ty đã được chọn từ danh sách ngành"}>
+                                    {aiMatch?.reason || "Công ty đã được chọn"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {/* AI suggestions (exclude already selected) */}
+                            {aiSuggestions
+                              .filter(c => !comparisonTickers.find(ct => ct.ma_ck === c.ma_ck))
+                              .map(c => {
+                              const relevanceColor = c.relevance === "cao" ? "text-green-600" : c.relevance === "thấp" ? "text-orange-500" : "text-yellow-600";
+                              return (
+                                <tr key={`ai-${c.ma_ck}`} className="border-b border-border/50 hover:bg-accent/30">
+                                  <td className="py-1.5 px-2">
+                                    <Checkbox
+                                      checked={false}
                                       data-testid={`ai-suggest-${c.ma_ck}`}
                                       onCheckedChange={(checked) => {
-                                        if (checked && !isSelected) {
+                                        if (checked) {
                                           setComparisonTickers(prev => [...prev, c as Company]);
-                                        } else if (!checked && isSelected) {
-                                          setComparisonTickers(prev => prev.filter(t => t.ma_ck !== c.ma_ck));
                                         }
                                       }}
                                     />

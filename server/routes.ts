@@ -730,34 +730,36 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/suggest-comparables", async (req: Request, res: Response) => {
     const { ticker, company_name, industry } = req.body;
 
-    // Get list of all company tickers in the database for validation
+    // Get all companies for validation (after AI responds)
     const allCompanies = storage.searchCompanies("").slice(0, 2000);
-    const tickerList = allCompanies.map(c => `${c.ma_ck} (${c.ten_tv})`).join(", ");
 
-    // Truncate ticker list if too long
-    const truncatedList = tickerList.length > 3000 ? tickerList.substring(0, 3000) + "..." : tickerList;
+    // Get companies in the same industry for context (not the full list)
+    const sameIndustryCompanies = allCompanies
+      .filter(c => c.nganh_2 === industry && c.ma_ck !== ticker)
+      .slice(0, 30)
+      .map(c => `${c.ma_ck} (${c.ten_tv})`)
+      .join(", ");
 
-    const prompt = `Bạn là chuyên gia phân tích chứng khoán Việt Nam. Tìm 10-15 công ty đã niêm yết trên sàn chứng khoán Việt Nam (HOSE, HNX, UPCOM) có thể so sánh với công ty ${ticker} - ${company_name} (ngành: ${industry}).
+    const prompt = `Bạn là chuyên gia phân tích chứng khoán Việt Nam. Tìm 10-15 công ty đã niêm yết trên sàn HOSE, HNX hoặc UPCOM có thể so sánh với:
 
-Tìm kiếm từ các nguồn:
-- congbothongtin.ssc.gov.vn
-- cafef.vn
-- vietstock.vn
+Công ty mục tiêu: ${ticker} - ${company_name}
+Ngành: ${industry}
 
-Tiêu chí chọn:
-1. Cùng ngành hoặc hoạt động kinh doanh tương đồng nhất
-2. Quy mô tương đương hoặc đối thủ cạnh tranh trực tiếp
-3. Ưu tiên công ty trong cùng chuỗi giá trị
+Một số công ty cùng ngành đã biết: ${sameIndustryCompanies || "không có dữ liệu"}
 
-Danh sách mã CK trong database (chỉ chọn từ danh sách này): ${truncatedList}
+Yêu cầu:
+1. Tìm các công ty niêm yết có hoạt động kinh doanh TƯƠNG ĐỒNG NHẤT với ${company_name}
+2. Ưu tiên đối thủ cạnh tranh trực tiếp, cùng chuỗi giá trị, cùng phân khúc
+3. Sử dụng kiến thức về thị trường chứng khoán Việt Nam (tham khảo congbothongtin.ssc.gov.vn, cafef.vn, vietstock.vn)
+4. Chỉ đưa ra mã chứng khoán THỰC SỰ tồn tại trên sàn Việt Nam
 
-Trả lời CHÍNH XÁC theo format JSON array, mỗi phần tử gồm ticker, relevance (cao/trung bình/thấp), và reason:
+Trả lời JSON array, mỗi phần tử gồm ticker (mã CK), relevance (cao/trung bình/thấp), và reason (lý do ngắn gọn bằng tiếng Việt):
 [
-  {"ticker": "MÃ1", "relevance": "cao", "reason": "Cùng ngành sản xuất dược phẩm, đối thủ cạnh tranh trực tiếp"},
-  {"ticker": "MÃ2", "relevance": "trung bình", "reason": "Cùng lĩnh vực chăm sóc sức khỏe, quy mô tương đương"}
+  {"ticker": "ABC", "relevance": "cao", "reason": "Cùng ngành sản xuất X, đối thủ cạnh tranh trực tiếp"},
+  {"ticker": "DEF", "relevance": "trung bình", "reason": "Cùng lĩnh vực Y, quy mô tương đương"}
 ]
 
-Chỉ trả lời JSON array, không giải thích thêm.`;
+Lưu ý: Chỉ trả lời JSON array. Không đưa các mã không tồn tại.`;
 
     try {
       let response = "";

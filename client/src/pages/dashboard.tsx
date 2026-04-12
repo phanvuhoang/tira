@@ -1162,11 +1162,29 @@ export default function Dashboard() {
         // Auto-save AI report for editors/admins (save as HTML for rich rendering)
         if (canEdit && reportContent) {
           const htmlContent = simpleMarkdownToHtml(reportContent);
-          fetch(`${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/reports/save`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
-            body: JSON.stringify({ name: `${ticker} - AI Report - ${new Date().toLocaleDateString("vi-VN")}`, ticker, report_type: "ai", content: htmlContent }),
-          }).catch(() => {});
+          try {
+            const token = getToken();
+            const saveRes = await fetch(
+              `${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/reports/save`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                  name: `${ticker} - AI Report - ${new Date().toLocaleDateString("vi-VN")}`,
+                  ticker,
+                  report_type: "ai",
+                  content: htmlContent,
+                }),
+              }
+            );
+            const saveData = await saveRes.json();
+            console.log("AI report saved:", saveRes.ok, saveData);
+          } catch (saveErr) {
+            console.error("Failed to save AI report:", saveErr);
+          }
         }
       }
     } catch (err: any) {
