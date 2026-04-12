@@ -19,6 +19,7 @@ import {
   BarChart2,
   ExternalLink,
   Download,
+  Trash2,
 } from "lucide-react";
 
 /* ========== HELPER: Markdown to HTML ========== */
@@ -492,15 +493,30 @@ export default function ReportHistory() {
                             )}
                           </div>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openAnalysis(analysis)}
-                          className="shrink-0 gap-1.5 h-8"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          Mở phân tích
-                        </Button>
+                        <div className="flex gap-2 shrink-0">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openAnalysis(analysis)}
+                            className="gap-1.5 h-8"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Mở
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={async () => {
+                              try {
+                                await fetch(`${("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__")}/api/analyses/${analysis.id}`, { method: "DELETE" });
+                                queryClient.invalidateQueries({ queryKey: ["/api/analyses"] });
+                              } catch {}
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

@@ -733,33 +733,25 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     // Get all companies for validation (after AI responds)
     const allCompanies = storage.searchCompanies("").slice(0, 2000);
 
-    // Get companies in the same industry for context (not the full list)
-    const sameIndustryCompanies = allCompanies
-      .filter(c => c.nganh_2 === industry && c.ma_ck !== ticker)
-      .slice(0, 30)
-      .map(c => `${c.ma_ck} (${c.ten_tv})`)
-      .join(", ");
-
     const prompt = `Bạn là chuyên gia phân tích chứng khoán Việt Nam. Tìm 10-15 công ty đã niêm yết trên sàn HOSE, HNX hoặc UPCOM có thể so sánh với:
 
 Công ty mục tiêu: ${ticker} - ${company_name}
 Ngành: ${industry}
 
-Một số công ty cùng ngành đã biết: ${sameIndustryCompanies || "không có dữ liệu"}
+Hãy sử dụng kiến thức của bạn về thị trường chứng khoán Việt Nam để tìm các công ty phù hợp nhất. Tham khảo thông tin từ:
+- congbothongtin.ssc.gov.vn (Ủy ban Chứng khoán Nhà nước)
+- cafef.vn
+- vietstock.vn
 
-Yêu cầu:
-1. Tìm các công ty niêm yết có hoạt động kinh doanh TƯƠNG ĐỒNG NHẤT với ${company_name}
-2. Ưu tiên đối thủ cạnh tranh trực tiếp, cùng chuỗi giá trị, cùng phân khúc
-3. Sử dụng kiến thức về thị trường chứng khoán Việt Nam (tham khảo congbothongtin.ssc.gov.vn, cafef.vn, vietstock.vn)
-4. Chỉ đưa ra mã chứng khoán THỰC SỰ tồn tại trên sàn Việt Nam
+Tiêu chí:
+1. Hoạt động kinh doanh TƯƠNG ĐỒNG NHẤT với ${company_name}
+2. Ưu tiên: đối thủ cạnh tranh trực tiếp > cùng chuỗi giá trị > cùng phân khúc thị trường
+3. Chỉ đưa ra mã chứng khoán THỰC SỰ đang niêm yết trên sàn Việt Nam
 
-Trả lời JSON array, mỗi phần tử gồm ticker (mã CK), relevance (cao/trung bình/thấp), và reason (lý do ngắn gọn bằng tiếng Việt):
-[
-  {"ticker": "ABC", "relevance": "cao", "reason": "Cùng ngành sản xuất X, đối thủ cạnh tranh trực tiếp"},
-  {"ticker": "DEF", "relevance": "trung bình", "reason": "Cùng lĩnh vực Y, quy mô tương đương"}
-]
+Trả lời JSON array:
+[{"ticker": "MÃCK", "relevance": "cao/trung bình/thấp", "reason": "Lý do ngắn gọn bằng tiếng Việt"}]
 
-Lưu ý: Chỉ trả lời JSON array. Không đưa các mã không tồn tại.`;
+Chỉ trả lời JSON array, không giải thích thêm.`;
 
     try {
       let response = "";
