@@ -629,15 +629,65 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       // Clean up uploaded file
       fs.unlinkSync(req.file.path);
 
+      // ── Persist to JSON (auto after upload) ──────────────────────────────
+      // Strategy: upsert per company per year, keep max 6 most-recent years
+      // per company. Backup old JSON before writing (.bak file).
+      const MAX_YEARS = 6;
+      const dataDir = path.resolve(process.cwd(), "data");
+      let persistWarning = "";
+
+      const pruneYears = (
+        data: Record<string, Record<string, Record<string, any>>>
+      ): Record<string, Record<string, Record<string, any>>> => {
+        const pruned: typeof data = {};
+        for (const tk of Object.keys(data)) {
+          const years = Object.keys(data[tk]).sort(); // ascending
+          const keep = years.slice(-MAX_YEARS);        // keep N most recent
+          pruned[tk] = {};
+          for (const y of keep) pruned[tk][y] = data[tk][y];
+        }
+        return pruned;
+      };
+
+      const persistJSON = (filename: string, newData: Record<string, any>) => {
+        const filePath = path.join(dataDir, filename);
+        const bakPath  = path.join(dataDir, filename.replace(".json", ".bak.json"));
+        // Backup current file
+        if (fs.existsSync(filePath)) {
+          fs.copyFileSync(filePath, bakPath);
+        }
+        fs.writeFileSync(filePath, JSON.stringify(newData, null, 2), "utf-8");
+      };
+
+      try {
+        if (uploadType === "parent" || uploadType === "auto") {
+          const pruned = pruneYears(storage.financialFull);
+          persistJSON("data_financial_full.json", pruned);
+          // Sync in-memory to pruned version
+          storage.financialFull = pruned;
+        }
+        if (uploadType === "consolidated" || uploadType === "auto") {
+          const pruned = pruneYears(storage.financialPC);
+          persistJSON("data_financial_pc.json", pruned);
+          storage.financialPC = pruned;
+        }
+        if (uploadType === "general" || uploadType === "auto") {
+          persistJSON("data_companies.json", storage.companies);
+        }
+      } catch (persistErr: any) {
+        persistWarning = ` (Cảnh báo: không thể lưu vĩnh viễn — ${persistErr.message})`;
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       let message: string;
       if (uploadType === "parent") {
-        message = `Đã tải lên thành công dữ liệu tài chính Công ty mẹ. Thêm ${addedFinancial} dòng dữ liệu.`;
+        message = `Đã tải lên và lưu vĩnh viễn dữ liệu Công ty mẹ. Thêm ${addedFinancial} dòng dữ liệu.${persistWarning}`;
       } else if (uploadType === "consolidated") {
-        message = `Đã tải lên thành công dữ liệu tài chính Hợp nhất. Thêm ${addedFinancial} dòng dữ liệu.`;
+        message = `Đã tải lên và lưu vĩnh viễn dữ liệu Hợp nhất. Thêm ${addedFinancial} dòng dữ liệu.${persistWarning}`;
       } else if (uploadType === "general") {
-        message = `Đã tải lên thành công thông tin công ty. Thêm ${addedCompanies} công ty mới.`;
+        message = `Đã tải lên và lưu vĩnh viễn thông tin công ty. Thêm ${addedCompanies} công ty mới.${persistWarning}`;
       } else {
-        message = `Đã tải lên thành công. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu tài chính.`;
+        message = `Đã tải lên và lưu vĩnh viễn. Thêm ${addedCompanies} công ty mới, ${addedFinancial} dòng dữ liệu.${persistWarning}`;
       }
 
       res.json({ success: true, message });
