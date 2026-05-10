@@ -10,6 +10,7 @@ import { storage } from "./storage";
 import { calculateTiraIndicators } from "./tira-engine";
 import { loadUsers, login, register, verifyToken, getAllUsers, updateUserRole, deleteUser, resetPassword, authMiddleware, requireRole } from "./auth";
 import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore, calculateYearScore, calculateMultiYearScore, calcRiskSeverity } from "./risk-scoring";
+import { registerDeepCompanyRoutes } from "./deep-company/routes";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -242,6 +243,9 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   await storage.loadData();
   loadUsers();
   loadRiskWeights();
+
+  // ── TIRA Phase 2 — Module "Phân tích sâu Cty" (additive, không ảnh hưởng module hiện có)
+  registerDeepCompanyRoutes(app, generateReportText);
 
   // ── Company search ──────────────────────────
   app.get("/api/companies/search", (req: Request, res: Response) => {

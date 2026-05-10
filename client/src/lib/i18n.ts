@@ -18,6 +18,7 @@ const translations: Record<string, Record<Lang, string>> = {
   "nav.analysis": { vi: "Phân tích", en: "Analysis" },
   "nav.dashboard": { vi: "Dashboard", en: "Dashboard" },
   "nav.newCompany": { vi: "Công ty mới", en: "New Company" },
+  "nav.deepCompany": { vi: "Phân tích sâu Cty", en: "Deep Company Analysis" },
   "nav.upload": { vi: "Tải dữ liệu", en: "Upload Data" },
   "nav.history": { vi: "Lịch sử", en: "History" },
   "nav.admin": { vi: "Quản trị", en: "Admin" },

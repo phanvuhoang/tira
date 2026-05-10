@@ -13,6 +13,7 @@ import CustomCompany from "@/pages/custom-company";
 import ReportHistory from "@/pages/history";
 import LoginPage from "@/pages/login";
 import AdminPage from "@/pages/admin";
+import DeepCompanyPage from "@/pages/deep-company";
 import { useState } from "react";
 import { setToken } from "@/lib/auth";
 import { getLang, setLang, t } from "@/lib/i18n";
@@ -29,6 +30,7 @@ import {
   LogOut,
   User,
   Globe,
+  Microscope,
 } from "lucide-react";
 
 interface UserInfo {
@@ -61,6 +63,7 @@ function Sidebar({ user, onLogout }: SidebarProps) {
     { href: "/", label: t("nav.analysis"), icon: BarChart3, adminOnly: false },
     { href: dashboardHref, label: t("nav.dashboard"), icon: Shield, adminOnly: false },
     { href: "/custom", label: t("nav.newCompany"), icon: PlusCircle, adminOnly: false },
+    { href: "/deep-company", label: t("nav.deepCompany"), icon: Microscope, adminOnly: false },
     { href: "/upload", label: t("nav.upload"), icon: Upload, adminOnly: false },
     { href: "/history", label: t("nav.history"), icon: FileText, adminOnly: false },
     { href: "/admin", label: t("nav.admin"), icon: Settings, adminOnly: true },
@@ -231,6 +234,7 @@ function AppLayout() {
           <Route path="/" component={Home} />
           <Route path="/dashboard" component={Dashboard} />
           <Route path="/custom" component={CustomCompany} />
+          <Route path="/deep-company" component={DeepCompanyPage} />
           <Route path="/upload" component={UploadPage} />
           <Route path="/history" component={ReportHistory} />
           <Route path="/admin">
