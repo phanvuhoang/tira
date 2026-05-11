@@ -22,6 +22,12 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+// OpenRouter: 4 models configá với default fallback
+const OPENROUTER_MODEL1 = process.env.OPENROUTER_MODEL1 || "qwen/qwen3.6-plus";
+const OPENROUTER_MODEL2 = process.env.OPENROUTER_MODEL2 || "minimax/minimax-m2.5";
+const OPENROUTER_MODEL3 = process.env.OPENROUTER_MODEL3 || "moonshotai/kimi-k2.5";
+const OPENROUTER_MODEL4 = process.env.OPENROUTER_MODEL4 || "openrouter/auto";
+
 const anthropicClient = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
@@ -35,6 +41,18 @@ const deepseekClient = process.env.DEEPSEEK_API_KEY
 
 const openaiClient = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+// OpenRouter dùng OpenAI SDK với base URL riêng
+const openrouterClient = process.env.OPENROUTER_API_KEY
+  ? new OpenAI({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": process.env.OPENROUTER_REFERER || "https://tira.gpt4vn.com",
+        "X-Title": "TIRA",
+      },
+    })
   : null;
 
 // ─────────────────────────────────────────────
@@ -222,6 +240,22 @@ async function callOpenAIModel(prompt: string, modelId: string): Promise<string>
   }
 }
 
+async function callOpenRouterModel(prompt: string, modelId: string): Promise<string> {
+  if (!openrouterClient) {
+    throw new Error("OPENROUTER_API_KEY is not set.");
+  }
+  try {
+    const completion = await openrouterClient.chat.completions.create({
+      model: modelId,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 16384,
+    });
+    return completion.choices[0]?.message?.content || "";
+  } catch (err: any) {
+    throw new Error(`OpenRouter API error (${modelId}): ${err.message || err}`);
+  }
+}
+
 async function generateReportText(
   prompt: string,
   aiModel: string
@@ -232,8 +266,16 @@ async function generateReportText(
   if (aiModel === "openai") {
     return callOpenAIModel(prompt, OPENAI_MODEL);
   }
-  // default: anthropic
-  return callAnthropicModel(prompt, ANTHROPIC_MODEL);
+  if (aiModel === "anthropic") {
+    return callAnthropicModel(prompt, ANTHROPIC_MODEL);
+  }
+  // OpenRouter: 4 slots
+  if (aiModel === "openrouter1") return callOpenRouterModel(prompt, OPENROUTER_MODEL1);
+  if (aiModel === "openrouter2") return callOpenRouterModel(prompt, OPENROUTER_MODEL2);
+  if (aiModel === "openrouter3") return callOpenRouterModel(prompt, OPENROUTER_MODEL3);
+  if (aiModel === "openrouter4") return callOpenRouterModel(prompt, OPENROUTER_MODEL4);
+  // default fallback: deepseek (per user request)
+  return callDeepSeekModel(prompt, DEEPSEEK_MODEL);
 }
 
 // ─────────────────────────────────────────────
@@ -247,6 +289,22 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   // ── TIRA Phase 2 — Module "Phân tích sâu Cty" (additive, không ảnh hưởng module hiện có)
   registerDeepCompanyRoutes(app, generateReportText);
+
+  // Available AI models (for UI dropdowns)
+  app.get("/api/ai-models", (_req: Request, res: Response) => {
+    res.json({
+      default: "deepseek",
+      models: [
+        { id: "deepseek",    label: "DeepSeek",                              enabled: !!deepseekClient },
+        { id: "anthropic",   label: "Anthropic (Claude)",                    enabled: !!anthropicClient },
+        { id: "openai",      label: "OpenAI (ChatGPT)",                      enabled: !!openaiClient },
+        { id: "openrouter1", label: `OpenRouter — ${OPENROUTER_MODEL1}`,    enabled: !!openrouterClient },
+        { id: "openrouter2", label: `OpenRouter — ${OPENROUTER_MODEL2}`,    enabled: !!openrouterClient },
+        { id: "openrouter3", label: `OpenRouter — ${OPENROUTER_MODEL3}`,    enabled: !!openrouterClient },
+        { id: "openrouter4", label: `OpenRouter — ${OPENROUTER_MODEL4}`,    enabled: !!openrouterClient },
+      ],
+    });
+  });
 
   // ── Company search ──────────────────────────
   app.get("/api/companies/search", (req: Request, res: Response) => {

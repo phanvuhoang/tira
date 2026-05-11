@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useAiModels } from "@/hooks/use-ai-models";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Loader2,
@@ -137,34 +138,8 @@ const SECTIONS: Section[] = [
       { ma: "bctc.kqkdDoanhThuBanHangCN", ten: "DT bán hàng & CCDV (mã 01)" },
     ],
   },
-  {
-    title: "6. CDKT — đầu/cuối năm",
-    fields: [
-      { ma: "bctc.gtgtDuocKTDauNam", ten: "Mã 152 — đầu năm" },
-      { ma: "bctc.gtgtDuocKTCuoiNam", ten: "Mã 152 — cuối năm" },
-      { ma: "bctc.cdktPhaiThuKHDauNam", ten: "Phải thu KH (131) — đầu năm" },
-      { ma: "bctc.cdktPhaiThuKHCuoiNam", ten: "Phải thu KH (131) — cuối năm" },
-      { ma: "bctc.cdktPhaiTraNguoiBanDauNam", ten: "Phải trả NB (311) — đầu năm" },
-      { ma: "bctc.cdktPhaiTraNguoiBanCuoiNam", ten: "Phải trả NB (311) — cuối năm" },
-      { ma: "bctc.cdktTraTruocCNBanDauNam", ten: "Trả trước cho NB — đầu năm" },
-      { ma: "bctc.cdktTraTruocCNBanCuoiNam", ten: "Trả trước cho NB — cuối năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocDauNam", ten: "Người mua trả trước NH — đầu năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocCuoiNam", ten: "Người mua trả trước NH — cuối năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocDH", ten: "Người mua trả trước DH — cuối năm" },
-      { ma: "bctc.cdktPhaiThuKhac", ten: "Phải thu khác — cuối năm" },
-      { ma: "bctc.cdktDuPhongPhaiThuNH", ten: "Dự phòng PT khó đòi NH (số âm)" },
-      { ma: "bctc.cdktDuPhongPhaiThuDH", ten: "Dự phòng PT khó đòi DH (số âm)" },
-      { ma: "bctc.cdktTSDoDangDH", ten: "TS dở dang DH (240) — cuối năm" },
-      { ma: "bctc.cdktPhaiTraNLD", ten: "Phải trả NLĐ (334)" },
-      { ma: "bctc.cdktChiPhiPhaiTraNH", ten: "CP phải trả NH (335)" },
-      { ma: "bctc.cdktChiPhiPhaiTraDH", ten: "CP phải trả DH (343)" },
-      { ma: "bctc.cdktDTChuaThucHienNH", ten: "DT chưa thực hiện NH" },
-      { ma: "bctc.cdktDTChuaThucHienDH", ten: "DT chưa thực hiện DH" },
-      { ma: "bctc.cdktThueHoanLai", ten: "TS thuế TN hoãn lại" },
-      { ma: "bctc.cdktTongDuPhong", ten: "Tổng dự phòng" },
-      { ma: "bctc.cdktQuyKHCN", ten: "Quỹ KT phúc lợi" },
-    ],
-  },
+  // Phần 6 (CĐKT) đã được chuyển sang bảng "CĐKT & Beneish" riêng phía dưới.
+
   {
     title: "7. Lưu chuyển tiền tệ",
     fields: [
@@ -183,6 +158,8 @@ const SECTIONS: Section[] = [
       { ma: "bctc.yKienKiemToanCoNgoaiTru", ten: "Có ý kiến kiểm toán ngoại trừ? (1=Có, 0=Không)" },
     ],
   },
+  // Phần 9 + 10 (Beneish) đã được gộp chung với CĐKT trong bảng "CĐKT & Beneish" riêng.
+  /* removed sections 9 & 10 — fields rendered via BENEISH_CDKT_ROWS table
   {
     title: "9. Beneish — năm nay",
     fields: [
@@ -217,6 +194,56 @@ const SECTIONS: Section[] = [
       { ma: "beneish.namTruoc.noVayDaiHan", ten: "Nợ vay DH (338)" },
     ],
   },
+  */
+];
+
+// ══ Bảng "CĐKT & Beneish — Đầu năm / Cuối năm" ═══════════════════════════════════════════════════════════════════════
+// Gộp phần 6 (CĐKT) + 9 (Beneish năm nay = cuối năm) + 10 (Beneish năm trước = đầu năm) thành 1 bảng 3 cột.
+// Mỗi row map tới:
+//   - dauPaths[]: 1–2 path được set khi user nhập cột "Đầu năm" (auto-sync cả cdkt + beneish.namTruoc).
+//   - cuoiPaths[]: tương tự cho cột "Cuối năm" (cdkt + beneish.namNay).
+// Khi 1 bên trống (một số mục chỉ có ở 1 bên) thì leave empty array — input sẽ bị disable.
+interface BeneishCdktRow {
+  ten: string;
+  dauPaths: string[];
+  cuoiPaths: string[];
+  note?: string;
+}
+const BENEISH_CDKT_ROWS: BeneishCdktRow[] = [
+  // ── Doanh thu / KQKD ─────────────────────────────────────────────────
+  { ten: "Doanh thu thuần (KQKD mã 10)", dauPaths: ["beneish.namTruoc.doanhThuThuan"], cuoiPaths: ["beneish.namNay.doanhThuThuan"] },
+  { ten: "Giá vốn hàng bán (KQKD mã 11)",  dauPaths: ["beneish.namTruoc.giaVonHangBan"], cuoiPaths: ["beneish.namNay.giaVonHangBan"] },
+  { ten: "CP bán hàng + QLDN",               dauPaths: ["beneish.namTruoc.chiPhiBHQLDN"], cuoiPaths: ["beneish.namNay.chiPhiBHQLDN"] },
+  { ten: "LN sau thuế (KQKD mã 60)",         dauPaths: ["beneish.namTruoc.lnSauThue"],   cuoiPaths: ["beneish.namNay.lnSauThue"] },
+  // ── CĐKT — tài sản ngắn hạn ────────────────────────────────────────────
+  { ten: "Thuế GTGT được khấu trừ (mã 152)", dauPaths: ["bctc.gtgtDuocKTDauNam"],         cuoiPaths: ["bctc.gtgtDuocKTCuoiNam"] },
+  { ten: "Phải thu KH (mã 131)",              dauPaths: ["bctc.cdktPhaiThuKHDauNam", "beneish.namTruoc.phaiThuNganHan"], cuoiPaths: ["bctc.cdktPhaiThuKHCuoiNam", "beneish.namNay.phaiThuNganHan"] },
+  { ten: "Trả trước cho người bán",          dauPaths: ["bctc.cdktTraTruocCNBanDauNam"], cuoiPaths: ["bctc.cdktTraTruocCNBanCuoiNam"] },
+  { ten: "Phải thu khác (136+138+141)",        dauPaths: [],                              cuoiPaths: ["bctc.cdktPhaiThuKhac"] },
+  { ten: "Dự phòng PT khó đòi NH (số âm)",      dauPaths: [],                              cuoiPaths: ["bctc.cdktDuPhongPhaiThuNH"] },
+  { ten: "Dự phòng PT khó đòi DH (số âm)",      dauPaths: [],                              cuoiPaths: ["bctc.cdktDuPhongPhaiThuDH"] },
+  { ten: "Tổng TS ngắn hạn (mã 100)",          dauPaths: ["beneish.namTruoc.taiSanNganHan"], cuoiPaths: ["beneish.namNay.taiSanNganHan"] },
+  // ── CĐKT — tài sản dài hạn ──────────────────────────────────────────────
+  { ten: "TSCĐ ròng (mã 220)",                  dauPaths: ["beneish.namTruoc.taiSanCoDinhRong"], cuoiPaths: ["beneish.namNay.taiSanCoDinhRong"] },
+  { ten: "TS dở dang DH (mã 240)",             dauPaths: [],                              cuoiPaths: ["bctc.cdktTSDoDangDH"] },
+  { ten: "TS thuế TN hoãn lại",                dauPaths: [],                              cuoiPaths: ["bctc.cdktThueHoanLai"] },
+  { ten: "Chi phí khấu hao TSCĐ trong kỳ",     dauPaths: ["beneish.namTruoc.chiPhiKhauHao"], cuoiPaths: ["beneish.namNay.chiPhiKhauHao"] },
+  { ten: "Tổng tài sản (mã 270)",               dauPaths: ["beneish.namTruoc.tongTaiSan"],  cuoiPaths: ["beneish.namNay.tongTaiSan"] },
+  // ── CĐKT — nợ phải trả ─────────────────────────────────────────────────
+  { ten: "Phải trả người bán (mã 311)",         dauPaths: ["bctc.cdktPhaiTraNguoiBanDauNam"], cuoiPaths: ["bctc.cdktPhaiTraNguoiBanCuoiNam"] },
+  { ten: "Người mua trả trước NH",              dauPaths: ["bctc.cdktNguoiMuaTraTruocDauNam"], cuoiPaths: ["bctc.cdktNguoiMuaTraTruocCuoiNam"] },
+  { ten: "Người mua trả trước DH",              dauPaths: [],                              cuoiPaths: ["bctc.cdktNguoiMuaTraTruocDH"] },
+  { ten: "Phải trả NLĐ (mã 334)",              dauPaths: [],                              cuoiPaths: ["bctc.cdktPhaiTraNLD"] },
+  { ten: "CP phải trả ngắn hạn (mã 335)",       dauPaths: [],                              cuoiPaths: ["bctc.cdktChiPhiPhaiTraNH"] },
+  { ten: "CP phải trả dài hạn (mã 343)",        dauPaths: [],                              cuoiPaths: ["bctc.cdktChiPhiPhaiTraDH"] },
+  { ten: "DT chưa thực hiện NH",                dauPaths: [],                              cuoiPaths: ["bctc.cdktDTChuaThucHienNH"] },
+  { ten: "DT chưa thực hiện DH",                dauPaths: [],                              cuoiPaths: ["bctc.cdktDTChuaThucHienDH"] },
+  { ten: "Tổng dự phòng",                       dauPaths: [],                              cuoiPaths: ["bctc.cdktTongDuPhong"] },
+  { ten: "Quỹ khen thưởng phúc lợi",            dauPaths: [],                              cuoiPaths: ["bctc.cdktQuyKHCN"] },
+  { ten: "Nợ phải trả NH (mã 310)",              dauPaths: ["beneish.namTruoc.noPhaiTraNganHan"], cuoiPaths: ["beneish.namNay.noPhaiTraNganHan"] },
+  { ten: "Nợ vay/thuê TC dài hạn (mã 338)",    dauPaths: ["beneish.namTruoc.noVayDaiHan"], cuoiPaths: ["beneish.namNay.noVayDaiHan"] },
+  // ── LCTT (1 cột — cả năm) ─────────────────────────────────────────────
+  { ten: "Dòng tiền HĐKD (LCTT mã 20)",         dauPaths: ["beneish.namTruoc.dongTienHDKD"], cuoiPaths: ["beneish.namNay.dongTienHDKD"] },
 ];
 
 // Helper: set value vào nested object theo dot-path
@@ -269,7 +296,9 @@ export default function DeepCompanyPage() {
   const [inputs, setInputs] = useState<any>(emptyInputs());
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [report, setReport] = useState<string>("");
-  const [aiModel, setAiModel] = useState<string>("anthropic");
+  // Mặc định DeepSeek (theo yêu cầu user).
+  const [aiModel, setAiModel] = useState<string>("deepseek");
+  const aiModels = useAiModels();
   const [loadingAnalyze, setLoadingAnalyze] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
@@ -288,6 +317,57 @@ export default function DeepCompanyPage() {
       setPath(next, path, Number.isFinite(n as any) ? n : 0);
     }
     setInputs(next);
+  };
+
+  // Set NHIỀU paths cùng lúc (dùng cho bảng CĐKT/Beneish để sync cdkt + beneish)
+  const handleMultiField = (paths: string[], raw: string) => {
+    if (!paths.length) return;
+    const next = { ...inputs };
+    const cleaned = raw.replace(/[,\s]/g, "").replace(/\./g, "");
+    const n = cleaned === "" ? "" : Number(cleaned);
+    const val = Number.isFinite(n as any) ? n : 0;
+    for (const p of paths) setPath(next, p, val);
+    setInputs(next);
+  };
+
+  // Lấy giá trị cho một ô trong bảng CĐKT/Beneish — ưu tiên path đầu (cdkt là “canonical”).
+  const multiFieldValue = (paths: string[]): string => {
+    for (const p of paths) {
+      const v = getPath(inputs, p);
+      if (v !== undefined && v !== null && v !== "") return typeof v === "number" ? String(v) : String(v);
+    }
+    return "";
+  };
+
+  // ── Auto-fetch số từ BCTC công ty niêm yết (mã CK) ───────────────────────
+  const [listedTicker, setListedTicker] = useState("");
+  const [listedLoading, setListedLoading] = useState(false);
+  const fetchListedFinancials = async () => {
+    const tk = listedTicker.trim().toUpperCase();
+    if (!tk) {
+      toast({ title: "Nhập mã chứng khoán", variant: "destructive" });
+      return;
+    }
+    setListedLoading(true);
+    try {
+      const res = await apiRequest("GET", `/api/deep-company/fetch-listed/${encodeURIComponent(tk)}`);
+      const data = await res.json();
+      if (data?.bctc || data?.beneish) {
+        const next = { ...inputs };
+        if (data.bctc) for (const [k, v] of Object.entries(data.bctc)) setPath(next, `bctc.${k}`, v);
+        if (data.beneish?.namNay) for (const [k, v] of Object.entries(data.beneish.namNay)) setPath(next, `beneish.namNay.${k}`, v);
+        if (data.beneish?.namTruoc) for (const [k, v] of Object.entries(data.beneish.namTruoc)) setPath(next, `beneish.namTruoc.${k}`, v);
+        if (data.meta?.tenCty) setPath(next, "meta.tenCty", data.meta.tenCty);
+        setInputs(next);
+        toast({ title: `Đã tải số từ BCTC ${tk}`, description: data.note || "" });
+      } else {
+        toast({ title: "Không tìm thấy số liệu", description: data?.error || "Thử lại sau", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Lỗi tải BCTC", description: e?.message, variant: "destructive" });
+    } finally {
+      setListedLoading(false);
+    }
   };
 
   const fieldValue = (path: string): string => {
@@ -447,6 +527,80 @@ export default function DeepCompanyPage() {
             ))}
           </div>
 
+          {/* Bảng CĐKT & Beneish — Đầu năm / Cuối năm (gộp phần 6 + 9 + 10) */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-sm" style={{ color: PRIMARY }}>
+                  6. CĐKT & Beneish M-Score — Đầu năm / Cuối năm
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Công ty niêm yết:</span>
+                  <Input
+                    className="h-8 w-28 text-xs uppercase"
+                    placeholder="Mã CK"
+                    value={listedTicker}
+                    onChange={(e) => setListedTicker(e.target.value)}
+                    data-testid="input-listed-ticker"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchListedFinancials}
+                    disabled={listedLoading}
+                    data-testid="btn-fetch-listed"
+                  >
+                    {listedLoading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Download className="w-3 h-3 mr-1" />}
+                    Tải số từ BCTC
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Đầu năm = số cuối năm trước trên BCTC. Khi nhập, hệ tự đồng bộ sang Beneish M-Score (mục 2.7).
+              </p>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/40">
+                      <th className="text-left p-2 font-semibold w-[55%]">Chỉ tiêu</th>
+                      <th className="text-right p-2 font-semibold">Đầu năm</th>
+                      <th className="text-right p-2 font-semibold">Cuối năm</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {BENEISH_CDKT_ROWS.map((row, idx) => (
+                      <tr key={idx} className="border-b hover:bg-muted/20">
+                        <td className="p-2">{row.ten}</td>
+                        <td className="p-1">
+                          <Input
+                            className="h-8 text-xs text-right"
+                            placeholder={row.dauPaths.length ? "0" : "—"}
+                            disabled={row.dauPaths.length === 0}
+                            value={multiFieldValue(row.dauPaths)}
+                            onChange={(e) => handleMultiField(row.dauPaths, e.target.value)}
+                            data-testid={`bn-dau-${idx}`}
+                          />
+                        </td>
+                        <td className="p-1">
+                          <Input
+                            className="h-8 text-xs text-right"
+                            placeholder={row.cuoiPaths.length ? "0" : "—"}
+                            disabled={row.cuoiPaths.length === 0}
+                            value={multiFieldValue(row.cuoiPaths)}
+                            onChange={(e) => handleMultiField(row.cuoiPaths, e.target.value)}
+                            data-testid={`bn-cuoi-${idx}`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="flex justify-end gap-2 sticky bottom-0 bg-background/90 backdrop-blur p-3 -mx-6 px-6 border-t">
             <Button variant="ghost" onClick={() => setInputs(emptyInputs())}>Xoá tất cả</Button>
             <Button
@@ -598,9 +752,11 @@ export default function DeepCompanyPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                    <SelectItem value="deepseek">DeepSeek</SelectItem>
+                    {aiModels.models.map((m) => (
+                      <SelectItem key={m.id} value={m.id} disabled={!m.enabled}>
+                        {m.label}{!m.enabled ? " (chưa cấu hình)" : ""}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button onClick={runReport} disabled={loadingReport} style={{ background: PRIMARY }} data-testid="btn-ai-report">

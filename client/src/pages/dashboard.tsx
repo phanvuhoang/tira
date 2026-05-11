@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { t, useLang, FS_LABELS, IS_KEYS, BS_KEYS, getLang } from "@/lib/i18n";
 import { getToken } from "@/lib/auth";
+import { useAiModels } from "@/hooks/use-ai-models";
 import { useLocation } from "wouter";
 import { getHashParams } from "@/lib/hashLocation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -806,7 +807,9 @@ export default function Dashboard() {
   const [aiReportOpen, setAiReportOpen] = useState(false);
   const [aiReportTypes, setAiReportTypes] = useState<string[]>(["financial", "tax"]);
   const [aiReportYears, setAiReportYears] = useState<string[]>([]);
-  const [aiModel, setAiModel] = useState("anthropic");
+  // Mặc định DeepSeek (theo yêu cầu user).
+  const [aiModel, setAiModel] = useState("deepseek");
+  const aiModels = useAiModels();
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiReportContent, setAiReportContent] = useState<string | null>(null);
   const [aiReportError, setAiReportError] = useState<string | null>(null);
@@ -1430,9 +1433,11 @@ export default function Dashboard() {
                   <SelectValue placeholder="Chọn AI Model" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="deepseek">DeepSeek</SelectItem>
-                  <SelectItem value="openai">ChatGPT</SelectItem>
+                  {aiModels.models.map((m) => (
+                    <SelectItem key={m.id} value={m.id} disabled={!m.enabled}>
+                      {m.label}{!m.enabled ? " (chưa cấu hình)" : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

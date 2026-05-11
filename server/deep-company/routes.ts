@@ -30,6 +30,7 @@ import { buildDeepCompanyTemplate, parseDeepCompanyTemplate } from "./template";
 import type { DeepCompanyInputs, DeepCompanyAnalysis } from "./types";
 import { deepCompanyRepo } from "../db/repositories";
 import { verifyToken } from "../auth";
+import { storage } from "../storage";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -107,6 +108,89 @@ export function registerDeepCompanyRoutes(
       }
     }
   );
+
+  // ── Lấy số BCTC công ty niêm yết (auto-fill cdkt + beneish) ──────────────
+  // Trang "Phân tích sâu Cty" cho phép nhập mã CK để tự động load số liệu 2 năm gần nhất
+  // (năm mới nhất = cuối năm, năm trước = đầu năm). Dựa trên data/data_financial_pc.json.
+  app.get("/api/deep-company/fetch-listed/:ticker", (req: Request, res: Response) => {
+    try {
+      const ticker = String(req.params.ticker || "").toUpperCase().trim();
+      if (!ticker) return res.status(400).json({ error: "Thiếu mã chứng khoán" });
+
+      const finData = storage.getFinancialData(ticker, "Consolidated");
+      if (!finData) return res.status(404).json({ error: `Không tìm thấy BCTC ${ticker}` });
+
+      const years = Object.keys(finData).sort();
+      if (years.length < 2) {
+        return res.status(400).json({ error: `${ticker} chưa có đủ 2 năm BCTC để tính Beneish` });
+      }
+      const yNow = years[years.length - 1];
+      const yPrev = years[years.length - 2];
+      const cur = finData[yNow] || {};
+      const prv = finData[yPrev] || {};
+
+      const num = (rec: any, code: string) => {
+        const v = rec?.[code];
+        return typeof v === "number" && Number.isFinite(v) ? v : 0;
+      };
+
+      // ---- Beneish YearInputs từ mã BCTC (mã trong data/data_mapping.json) ----
+      // 210=DT thuần, 211=GVHB, 1131=PT NH KH, 1100=TS NH, 1220=TSCĐ, 663=KH TSCĐ,
+      // 1440=Tổng NV ($\approx$ Tổng TS), 225+226=CP BH+QL, 260=LNST, 54=LCTT thuần trong kỳ,
+      // 1310=Nợ NH, 1338=Nợ vay DH.
+      const beneishFrom = (rec: any) => ({
+        doanhThuThuan: num(rec, "210"),
+        giaVonHangBan: num(rec, "211"),
+        phaiThuNganHan: num(rec, "1131"),
+        taiSanNganHan: num(rec, "1100"),
+        taiSanCoDinhRong: num(rec, "1220"),
+        chiPhiKhauHao: num(rec, "663"),
+        tongTaiSan: num(rec, "1440"),
+        chiPhiBHQLDN: num(rec, "225") + num(rec, "226"),
+        lnSauThue: num(rec, "260"),
+        dongTienHDKD: num(rec, "54"),
+        noPhaiTraNganHan: num(rec, "1310"),
+        noVayDaiHan: num(rec, "1338"),
+      });
+
+      const beneish = {
+        namNay: beneishFrom(cur),
+        namTruoc: beneishFrom(prv),
+      };
+
+      // ---- bctc.cdkt* fields (đồng bộ với beneish) ----
+      // Đầu năm = cuối năm trước; Cuối năm = cuối năm hiện tại.
+      const bctc = {
+        kqkdDoanhThuBanHangCN: num(cur, "210"), // DT thuần cả năm
+
+        cdktPhaiThuKHDauNam: num(prv, "1131"),
+        cdktPhaiThuKHCuoiNam: num(cur, "1131"),
+        cdktPhaiTraNguoiBanDauNam: num(prv, "1311"),
+        cdktPhaiTraNguoiBanCuoiNam: num(cur, "1311"),
+        cdktTraTruocCNBanDauNam: num(prv, "1132"),
+        cdktTraTruocCNBanCuoiNam: num(cur, "1132"),
+        cdktNguoiMuaTraTruocDauNam: num(prv, "1312"),
+        cdktNguoiMuaTraTruocCuoiNam: num(cur, "1312"),
+        cdktNguoiMuaTraTruocDH: num(cur, "1332"),
+        cdktPhaiTraNLD: num(cur, "1314"),
+        cdktChiPhiPhaiTraNH: num(cur, "1315"),
+        cdktChiPhiPhaiTraDH: num(cur, "1333"),
+      };
+
+      const company = storage.getCompany(ticker);
+      res.json({
+        ticker,
+        meta: { tenCty: company?.ten_tv || company?.name || ticker, nam: Number(yNow) },
+        bctc,
+        beneish,
+        years: { dauNam: yPrev, cuoiNam: yNow },
+        note: `Đã load BCTC hợp nhất ${yPrev} → ${yNow}. Vui lòng nhập bổ sung các mục không sẵn có.`,
+      });
+    } catch (e: any) {
+      console.error("[deep-company/fetch-listed]", e);
+      res.status(500).json({ error: "Lỗi", detail: e?.message });
+    }
+  });
 
   // ── Phân tích: từ inputs → 39 chỉ số + Beneish + scoring ──────────────
   app.post("/api/deep-company/analyze", (req: Request, res: Response) => {

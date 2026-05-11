@@ -15,9 +15,21 @@ interface Row {
   defaultValue?: number | string;
 }
 
+/** Hàng 2 cột (đầu năm / cuối năm) — dùng cho phần CĐKT + Beneish gộp. */
+interface DualRow {
+  ten: string;
+  /** Mã trường ứng với cột "Đầu năm" (= năm trước theo BCTC). Có thể là 1 hoặc nhiều mã (auto-sync). */
+  dauPaths: string[];
+  /** Mã trường ứng với cột "Cuối năm" (= năm nay theo BCTC). */
+  cuoiPaths: string[];
+  ghiChu?: string;
+}
+
 interface Section {
   title: string;
-  rows: Row[];
+  rows?: Row[];
+  /** Khi có dualRows, section render dạng 4 cột: Tên | Đầu năm | Cuối năm | Ghi chú. */
+  dualRows?: DualRow[];
 }
 
 const SECTIONS: Section[] = [
@@ -82,36 +94,47 @@ const SECTIONS: Section[] = [
       { ma: "bctc.kqkdDoanhThuBanHangCN", ten: "Doanh thu bán hàng và CCDV (mã 01)" },
     ],
   },
+  // Section 6 (CĐKT) + 9 (Beneish năm nay) + 10 (Beneish năm trước) — gộp thành 1 bảng 2 cột.
+  // "Đầu năm" = beneish.namTruoc + cdkt*DauNam; "Cuối năm" = beneish.namNay + cdkt*CuoiNam.
   {
-    title: "6. CÂN ĐỐI KẾ TOÁN — số dư đầu/cuối năm",
-    rows: [
-      { ma: "bctc.gtgtDuocKTDauNam", ten: "Mã 152 — Thuế GTGT được KT — đầu năm" },
-      { ma: "bctc.gtgtDuocKTCuoiNam", ten: "Mã 152 — Thuế GTGT được KT — cuối năm" },
-      { ma: "bctc.cdktPhaiThuKHDauNam", ten: "Phải thu KH (131) — đầu năm" },
-      { ma: "bctc.cdktPhaiThuKHCuoiNam", ten: "Phải thu KH (131) — cuối năm" },
-      { ma: "bctc.cdktPhaiTraNguoiBanDauNam", ten: "Phải trả người bán (311) — đầu năm" },
-      { ma: "bctc.cdktPhaiTraNguoiBanCuoiNam", ten: "Phải trả người bán (311) — cuối năm" },
-      { ma: "bctc.cdktTraTruocCNBanDauNam", ten: "Trả trước cho người bán — đầu năm" },
-      { ma: "bctc.cdktTraTruocCNBanCuoiNam", ten: "Trả trước cho người bán — cuối năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocDauNam", ten: "Người mua trả trước (NH) — đầu năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocCuoiNam", ten: "Người mua trả trước (NH) — cuối năm" },
-      { ma: "bctc.cdktNguoiMuaTraTruocDH", ten: "Người mua trả trước dài hạn — cuối năm" },
-      { ma: "bctc.cdktPhaiThuKhac", ten: "Phải thu khác (136+138+141) — cuối năm" },
-      { ma: "bctc.cdktDuPhongPhaiThuNH", ten: "Dự phòng PT khó đòi NH (số âm) — cuối năm" },
-      { ma: "bctc.cdktDuPhongPhaiThuDH", ten: "Dự phòng PT khó đòi DH (số âm) — cuối năm" },
-      { ma: "bctc.cdktTSDoDangDH", ten: "TS dở dang dài hạn (240) — cuối năm" },
-      { ma: "bctc.cdktPhaiTraNLD", ten: "Phải trả người lao động (334) — cuối năm" },
-      { ma: "bctc.cdktChiPhiPhaiTraNH", ten: "Chi phí phải trả NH (335) — cuối năm" },
-      { ma: "bctc.cdktChiPhiPhaiTraDH", ten: "Chi phí phải trả DH (343) — cuối năm" },
-      { ma: "bctc.cdktDTChuaThucHienNH", ten: "Doanh thu chưa thực hiện NH — cuối năm" },
-      { ma: "bctc.cdktDTChuaThucHienDH", ten: "Doanh thu chưa thực hiện DH — cuối năm" },
-      { ma: "bctc.cdktThueHoanLai", ten: "Tài sản thuế thu nhập hoãn lại — cuối năm" },
-      { ma: "bctc.cdktTongDuPhong", ten: "Tổng dự phòng — cuối năm" },
-      { ma: "bctc.cdktQuyKHCN", ten: "Quỹ khen thưởng phúc lợi — cuối năm" },
+    title: "6. CÂN ĐỐI KẾ TOÁN & BENEISH M-SCORE — Đầu năm / Cuối năm",
+    dualRows: [
+      // ── Nhóm KQKD (Beneish) ──────────────────────────────────────────────
+      { ten: "Doanh thu thuần (mã 10)", dauPaths: ["beneish.namTruoc.doanhThuThuan"], cuoiPaths: ["beneish.namNay.doanhThuThuan"] },
+      { ten: "Giá vốn hàng bán (mã 11)", dauPaths: ["beneish.namTruoc.giaVonHangBan"], cuoiPaths: ["beneish.namNay.giaVonHangBan"] },
+      { ten: "Chi phí bán hàng + QLDN", dauPaths: ["beneish.namTruoc.chiPhiBHQLDN"], cuoiPaths: ["beneish.namNay.chiPhiBHQLDN"] },
+      { ten: "Chi phí khấu hao TSCĐ", dauPaths: ["beneish.namTruoc.chiPhiKhauHao"], cuoiPaths: ["beneish.namNay.chiPhiKhauHao"] },
+      { ten: "Lợi nhuận sau thuế (mã 60)", dauPaths: ["beneish.namTruoc.lnSauThue"], cuoiPaths: ["beneish.namNay.lnSauThue"] },
+      { ten: "Lưu chuyển tiền thuần HĐKD (mã 20 LCTT)", dauPaths: ["beneish.namTruoc.dongTienHDKD"], cuoiPaths: ["beneish.namNay.dongTienHDKD"] },
+      // ── Tài sản (CĐKT + Beneish) ─────────────────────────────────────────
+      { ten: "Tài sản ngắn hạn (mã 100)", dauPaths: ["beneish.namTruoc.taiSanNganHan"], cuoiPaths: ["beneish.namNay.taiSanNganHan"] },
+      { ten: "Phải thu KH ngắn hạn (mã 131)", dauPaths: ["bctc.cdktPhaiThuKHDauNam", "beneish.namTruoc.phaiThuNganHan"], cuoiPaths: ["bctc.cdktPhaiThuKHCuoiNam", "beneish.namNay.phaiThuNganHan"] },
+      { ten: "Trả trước cho người bán", dauPaths: ["bctc.cdktTraTruocCNBanDauNam"], cuoiPaths: ["bctc.cdktTraTruocCNBanCuoiNam"] },
+      { ten: "Thuế GTGT được KT (mã 152)", dauPaths: ["bctc.gtgtDuocKTDauNam"], cuoiPaths: ["bctc.gtgtDuocKTCuoiNam"] },
+      { ten: "Phải thu khác (136+138+141)", dauPaths: [], cuoiPaths: ["bctc.cdktPhaiThuKhac"] },
+      { ten: "Dự phòng PT khó đòi NH (số âm)", dauPaths: [], cuoiPaths: ["bctc.cdktDuPhongPhaiThuNH"] },
+      { ten: "Dự phòng PT khó đòi DH (số âm)", dauPaths: [], cuoiPaths: ["bctc.cdktDuPhongPhaiThuDH"] },
+      { ten: "Tài sản cố định ròng (mã 220)", dauPaths: ["beneish.namTruoc.taiSanCoDinhRong"], cuoiPaths: ["beneish.namNay.taiSanCoDinhRong"] },
+      { ten: "TS dở dang dài hạn (mã 240)", dauPaths: [], cuoiPaths: ["bctc.cdktTSDoDangDH"] },
+      { ten: "Tài sản thuế thu nhập hoãn lại", dauPaths: [], cuoiPaths: ["bctc.cdktThueHoanLai"] },
+      { ten: "Tổng tài sản (mã 270)", dauPaths: ["beneish.namTruoc.tongTaiSan"], cuoiPaths: ["beneish.namNay.tongTaiSan"] },
+      // ── Nguồn vốn (CĐKT + Beneish) ───────────────────────────────────────
+      { ten: "Nợ phải trả ngắn hạn (mã 310)", dauPaths: ["beneish.namTruoc.noPhaiTraNganHan"], cuoiPaths: ["beneish.namNay.noPhaiTraNganHan"] },
+      { ten: "Phải trả người bán NH (mã 311)", dauPaths: ["bctc.cdktPhaiTraNguoiBanDauNam"], cuoiPaths: ["bctc.cdktPhaiTraNguoiBanCuoiNam"] },
+      { ten: "Người mua trả trước NH (mã 312)", dauPaths: ["bctc.cdktNguoiMuaTraTruocDauNam"], cuoiPaths: ["bctc.cdktNguoiMuaTraTruocCuoiNam"] },
+      { ten: "Người mua trả trước DH (mã 332)", dauPaths: [], cuoiPaths: ["bctc.cdktNguoiMuaTraTruocDH"] },
+      { ten: "Phải trả người lao động (334)", dauPaths: [], cuoiPaths: ["bctc.cdktPhaiTraNLD"] },
+      { ten: "Chi phí phải trả NH (335)", dauPaths: [], cuoiPaths: ["bctc.cdktChiPhiPhaiTraNH"] },
+      { ten: "Chi phí phải trả DH (343)", dauPaths: [], cuoiPaths: ["bctc.cdktChiPhiPhaiTraDH"] },
+      { ten: "Doanh thu chưa thực hiện NH", dauPaths: [], cuoiPaths: ["bctc.cdktDTChuaThucHienNH"] },
+      { ten: "Doanh thu chưa thực hiện DH", dauPaths: [], cuoiPaths: ["bctc.cdktDTChuaThucHienDH"] },
+      { ten: "Vay & nợ thuê tài chính DH (mã 338)", dauPaths: ["beneish.namTruoc.noVayDaiHan"], cuoiPaths: ["beneish.namNay.noVayDaiHan"] },
+      { ten: "Tổng dự phòng", dauPaths: [], cuoiPaths: ["bctc.cdktTongDuPhong"] },
+      { ten: "Quỹ khen thưởng phúc lợi", dauPaths: [], cuoiPaths: ["bctc.cdktQuyKHCN"] },
     ],
   },
   {
-    title: "7. LƯU CHUYỂN TIỀN TỆ",
+    title: "7. LƯU CHUYỂN TIỀN TỆ (riêng — không trùng với MS20 ở phần 6)",
     rows: [
       { ma: "bctc.lcttTienThuBanHang_MS01", ten: "MS01 — Tiền thu từ BH, CCDV và DT khác" },
       { ma: "bctc.lcttTienChiNCC_MS02", ten: "MS02 — Tiền chi cho người cung cấp HHDV" },
@@ -132,40 +155,6 @@ const SECTIONS: Section[] = [
       },
     ],
   },
-  {
-    title: "9. BENEISH M-SCORE — NĂM NAY",
-    rows: [
-      { ma: "beneish.namNay.doanhThuThuan", ten: "Doanh thu thuần (mã 10)" },
-      { ma: "beneish.namNay.giaVonHangBan", ten: "Giá vốn hàng bán (mã 11)" },
-      { ma: "beneish.namNay.phaiThuNganHan", ten: "Phải thu ngắn hạn của KH (mã 131)" },
-      { ma: "beneish.namNay.taiSanNganHan", ten: "Tài sản ngắn hạn (mã 100)" },
-      { ma: "beneish.namNay.taiSanCoDinhRong", ten: "Tài sản cố định ròng (mã 220)" },
-      { ma: "beneish.namNay.chiPhiKhauHao", ten: "Chi phí khấu hao TSCĐ" },
-      { ma: "beneish.namNay.tongTaiSan", ten: "Tổng tài sản (mã 270)" },
-      { ma: "beneish.namNay.chiPhiBHQLDN", ten: "Chi phí bán hàng + QLDN" },
-      { ma: "beneish.namNay.lnSauThue", ten: "Lợi nhuận sau thuế (mã 60)" },
-      { ma: "beneish.namNay.dongTienHDKD", ten: "Lưu chuyển tiền thuần từ HĐKD (mã 20 LCTT)" },
-      { ma: "beneish.namNay.noPhaiTraNganHan", ten: "Nợ phải trả ngắn hạn (mã 310)" },
-      { ma: "beneish.namNay.noVayDaiHan", ten: "Vay và nợ thuê tài chính DH (mã 338)" },
-    ],
-  },
-  {
-    title: "10. BENEISH M-SCORE — NĂM TRƯỚC",
-    rows: [
-      { ma: "beneish.namTruoc.doanhThuThuan", ten: "Doanh thu thuần (mã 10)" },
-      { ma: "beneish.namTruoc.giaVonHangBan", ten: "Giá vốn hàng bán (mã 11)" },
-      { ma: "beneish.namTruoc.phaiThuNganHan", ten: "Phải thu ngắn hạn của KH (mã 131)" },
-      { ma: "beneish.namTruoc.taiSanNganHan", ten: "Tài sản ngắn hạn (mã 100)" },
-      { ma: "beneish.namTruoc.taiSanCoDinhRong", ten: "Tài sản cố định ròng (mã 220)" },
-      { ma: "beneish.namTruoc.chiPhiKhauHao", ten: "Chi phí khấu hao TSCĐ" },
-      { ma: "beneish.namTruoc.tongTaiSan", ten: "Tổng tài sản (mã 270)" },
-      { ma: "beneish.namTruoc.chiPhiBHQLDN", ten: "Chi phí bán hàng + QLDN" },
-      { ma: "beneish.namTruoc.lnSauThue", ten: "Lợi nhuận sau thuế (mã 60)" },
-      { ma: "beneish.namTruoc.dongTienHDKD", ten: "Lưu chuyển tiền thuần từ HĐKD (mã 20 LCTT)" },
-      { ma: "beneish.namTruoc.noPhaiTraNganHan", ten: "Nợ phải trả ngắn hạn (mã 310)" },
-      { ma: "beneish.namTruoc.noVayDaiHan", ten: "Vay và nợ thuê tài chính DH (mã 338)" },
-    ],
-  },
 ];
 
 /**
@@ -175,6 +164,11 @@ export function buildDeepCompanyTemplate(): Buffer {
   const wb = XLSX.utils.book_new();
 
   // ── Sheet 1: Input ─────────────────────────────────────────────────────
+  // Format: 4 cột | Mã trường | Tên trường | Giá trị | Ghi chú |
+  // Riêng section CĐKT+Beneish (có dualRows) sẽ in 2 dòng liên tiếp:
+  //  • dòng "Đầu năm" cho tất cả mã ứng với cột đầu năm
+  //  • dòng "Cuối năm" cho tất cả mã ứng với cột cuối năm
+  // Cách bố trí 1-mã-1-dòng vẫn được giữ để parser cũ không hỏng.
   const aoa: any[][] = [];
   aoa.push([
     "Mã trường",
@@ -184,14 +178,70 @@ export function buildDeepCompanyTemplate(): Buffer {
   ]);
   for (const sec of SECTIONS) {
     aoa.push([sec.title, "", "", ""]);
-    for (const r of sec.rows) {
-      aoa.push([r.ma, r.ten, r.defaultValue ?? "", r.ghiChu ?? ""]);
+    if (sec.rows) {
+      for (const r of sec.rows) {
+        aoa.push([r.ma, r.ten, r.defaultValue ?? "", r.ghiChu ?? ""]);
+      }
+    }
+    if (sec.dualRows) {
+      // Header phụ giúp user thấy cấu trúc 2 cột — không có dấu chấm trong cột A nên parser bỏ qua.
+      aoa.push(["-- Đầu năm (= năm trước) --", "", "", ""]);
+      for (const dr of sec.dualRows) {
+        if (dr.dauPaths.length === 0) continue;
+        // Mã đầu tiên là path "chính"; mã phụ ghi trong ghi chú để parser tự đọc thêm.
+        const [head, ...extras] = dr.dauPaths;
+        const note = extras.length
+          ? `Đầu năm. Đồng bộ: ${extras.join(", ")}`
+          : "Đầu năm";
+        aoa.push([head, `${dr.ten} — đầu năm`, "", note]);
+        for (const ex of extras) {
+          aoa.push([ex, `${dr.ten} — đầu năm (đồng bộ)`, "", "= dòng trên"]);
+        }
+      }
+      aoa.push(["-- Cuối năm (= năm nay) --", "", "", ""]);
+      for (const dr of sec.dualRows) {
+        if (dr.cuoiPaths.length === 0) continue;
+        const [head, ...extras] = dr.cuoiPaths;
+        const note = extras.length
+          ? `Cuối năm. Đồng bộ: ${extras.join(", ")}`
+          : "Cuối năm";
+        aoa.push([head, `${dr.ten} — cuối năm`, "", note]);
+        for (const ex of extras) {
+          aoa.push([ex, `${dr.ten} — cuối năm (đồng bộ)`, "", "= dòng trên"]);
+        }
+      }
     }
     aoa.push(["", "", "", ""]); // dòng trống ngăn cách section
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 42 }, { wch: 60 }, { wch: 22 }, { wch: 40 }];
+  ws["!cols"] = [{ wch: 44 }, { wch: 60 }, { wch: 22 }, { wch: 50 }];
   XLSX.utils.book_append_sheet(wb, ws, "Input");
+
+  // ── Sheet phụ "CĐKT & Beneish (2 cột)" — chỉ để user xem trực quan, KHÔNG dùng parse.
+  //    Format: | Chỉ tiêu | Đầu năm | Cuối năm | Ghi chú |
+  const cdktSection = SECTIONS.find((s) => s.dualRows);
+  if (cdktSection?.dualRows) {
+    const aoa2: any[][] = [];
+    aoa2.push([cdktSection.title]);
+    aoa2.push([""]);
+    aoa2.push(["Chỉ tiêu", "Đầu năm (năm trước)", "Cuối năm (năm nay)", "Mã trường"]);
+    for (const dr of cdktSection.dualRows) {
+      const codes = [
+        dr.dauPaths.length ? `Đầu: ${dr.dauPaths.join(" + ")}` : "",
+        dr.cuoiPaths.length ? `Cuối: ${dr.cuoiPaths.join(" + ")}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      aoa2.push([dr.ten, dr.dauPaths.length ? "" : "—", dr.cuoiPaths.length ? "" : "—", codes]);
+    }
+    aoa2.push([""]);
+    aoa2.push([
+      "Lưu ý: Sheet này chỉ để TRỰC QUAN. Để nhập số, vui lòng dùng sheet 'Input'.",
+    ]);
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2["!cols"] = [{ wch: 50 }, { wch: 22 }, { wch: 22 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, ws2, "CĐKT-Beneish 2 cột");
+  }
 
   // ── Sheet 2: Hướng dẫn ────────────────────────────────────────────────
   const huongDan = [
@@ -215,10 +265,13 @@ export function buildDeepCompanyTemplate(): Buffer {
     ["3. Tờ khai quyết toán TNDN"],
     ["4. Sổ kế toán — phát sinh trong kỳ"],
     ["5. KQKD"],
-    ["6. CDKT — số dư đầu/cuối năm"],
+    ["6. CĐKT & Beneish M-Score — Đầu năm / Cuối năm (2 cột, gộp section 6+9+10 cũ)"],
     ["7. Lưu chuyển tiền tệ"],
     ["8. Kiểm toán"],
-    ["9–10. Beneish M-Score (2 năm)"],
+    [""],
+    [
+      "Mẹo: với công ty niêm yết, có thể bấm 'Tải số từ BCTC' ngay trên UI để auto-fill phần 6 (CĐKT + Beneish).",
+    ],
     [""],
     [
       "Sau khi điền xong, vào module 'Phân tích sâu Cty' trên TIRA, bấm 'Tải file Excel lên' để chạy phân tích.",
