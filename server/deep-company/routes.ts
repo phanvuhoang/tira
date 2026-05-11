@@ -12,7 +12,6 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import type { Express, Request, Response } from "express";
-import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
@@ -29,33 +28,22 @@ import {
 import { buildDeepCompanyPrompt } from "./ai-report";
 import { buildDeepCompanyTemplate, parseDeepCompanyTemplate } from "./template";
 import type { DeepCompanyInputs, DeepCompanyAnalysis } from "./types";
+import { deepCompanyRepo } from "../db/repositories";
+import { verifyToken } from "../auth";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
-const STORAGE_FILE = path.resolve(
-  process.cwd(),
-  "data",
-  "deep_company_analyses.json"
-);
-
-function loadStore(): any[] {
-  try {
-    if (fs.existsSync(STORAGE_FILE)) {
-      return JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8"));
+// Extract user context từ Bearer token (matching pattern ở /api/reports)
+function extractUserContext(req: Request): { userId?: string; isAdmin: boolean } {
+  const authH = req.headers.authorization;
+  if (authH?.startsWith("Bearer ")) {
+    const p = verifyToken(authH.slice(7));
+    if (p) {
+      return { userId: p.id, isAdmin: p.role === "admin" };
     }
-  } catch (e) {
-    console.error("[deep-company] error loading store:", e);
   }
-  return [];
-}
-function saveStore(arr: any[]) {
-  try {
-    const dir = path.dirname(STORAGE_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(arr, null, 2));
-  } catch (e) {
-    console.error("[deep-company] error saving store:", e);
-  }
+  // No auth → admin view (giữ tương thích với hành vi JSON cũ là trả về tất cả)
+  return { isAdmin: true };
 }
 
 function runAnalysis(inputs: DeepCompanyInputs): DeepCompanyAnalysis {
@@ -157,59 +145,80 @@ export function registerDeepCompanyRoutes(
   });
 
   // ── Lưu phân tích ────────────────────────────────────────────────────
-  app.post("/api/deep-company/save", (req: Request, res: Response) => {
+  app.post("/api/deep-company/save", async (req: Request, res: Response) => {
     try {
       const { inputs, analysis, report } = req.body || {};
       if (!analysis) return res.status(400).json({ error: "Thiếu analysis" });
-      const arr = loadStore();
-      const item = {
+      const ctx = extractUserContext(req);
+      const rec = {
         id: uuidv4(),
-        savedAt: new Date().toISOString(),
+        saved_at: new Date().toISOString(),
         meta: analysis.meta || {},
         inputs: inputs || null,
         analysis,
         report: report || null,
+        user_id: ctx.userId || "anonymous",
       };
-      arr.unshift(item);
-      // giữ tối đa 200 phân tích gần nhất
-      saveStore(arr.slice(0, 200));
-      res.json({ success: true, id: item.id });
+      await deepCompanyRepo.insert(rec);
+      res.json({ success: true, id: rec.id });
     } catch (e: any) {
+      console.error("[deep-company/save]", e);
       res.status(500).json({ error: "Không lưu được", detail: e?.message });
     }
   });
 
   // ── Danh sách phân tích đã lưu ────────────────────────────────────────
-  app.get("/api/deep-company/list", (_req: Request, res: Response) => {
-    const arr = loadStore();
-    res.json(
-      arr.map((a: any) => ({
-        id: a.id,
-        savedAt: a.savedAt,
-        meta: a.meta,
-        composite: a.analysis?.scoring?.composite,
-        overallLevel: a.analysis?.scoring?.overallLevel,
-        red: a.analysis?.scoring?.summary?.red,
-        yellow: a.analysis?.scoring?.summary?.yellow,
-      }))
-    );
+  app.get("/api/deep-company/list", async (req: Request, res: Response) => {
+    try {
+      const ctx = extractUserContext(req);
+      const arr = await deepCompanyRepo.listForUser(ctx);
+      res.json(
+        arr.map((a: any) => ({
+          id: a.id,
+          // Giữ field name `savedAt` (camelCase) cho UI compat
+          savedAt: a.saved_at,
+          meta: a.meta,
+          composite: a.analysis?.scoring?.composite,
+          overallLevel: a.analysis?.scoring?.overallLevel,
+          red: a.analysis?.scoring?.summary?.red,
+          yellow: a.analysis?.scoring?.summary?.yellow,
+        }))
+      );
+    } catch (e: any) {
+      console.error("[deep-company/list]", e);
+      res.status(500).json({ error: "Không tải được danh sách", detail: e?.message });
+    }
   });
 
   // ── Đọc 1 phân tích ───────────────────────────────────────────────────
-  app.get("/api/deep-company/:id", (req: Request, res: Response) => {
-    const arr = loadStore();
-    const item = arr.find((a: any) => a.id === req.params.id);
-    if (!item) return res.status(404).json({ error: "Không tìm thấy" });
-    res.json(item);
+  app.get("/api/deep-company/:id", async (req: Request, res: Response) => {
+    try {
+      const rec = await deepCompanyRepo.getById(String(req.params.id));
+      if (!rec) return res.status(404).json({ error: "Không tìm thấy" });
+      // Map back về shape cũ với `savedAt` cho UI compat
+      res.json({
+        id: rec.id,
+        savedAt: rec.saved_at,
+        meta: rec.meta,
+        inputs: rec.inputs,
+        analysis: rec.analysis,
+        report: rec.report,
+      });
+    } catch (e: any) {
+      console.error("[deep-company/get]", e);
+      res.status(500).json({ error: "Không đọc được", detail: e?.message });
+    }
   });
 
   // ── Xoá 1 phân tích ───────────────────────────────────────────────────
-  app.delete("/api/deep-company/:id", (req: Request, res: Response) => {
-    let arr = loadStore();
-    const before = arr.length;
-    arr = arr.filter((a: any) => a.id !== req.params.id);
-    saveStore(arr);
-    res.json({ success: true, removed: before - arr.length });
+  app.delete("/api/deep-company/:id", async (req: Request, res: Response) => {
+    try {
+      const ok = await deepCompanyRepo.delete(String(req.params.id));
+      res.json({ success: true, removed: ok ? 1 : 0 });
+    } catch (e: any) {
+      console.error("[deep-company/delete]", e);
+      res.status(500).json({ error: "Không xoá được", detail: e?.message });
+    }
   });
 
   console.log("[deep-company] Đã đăng ký 7 routes /api/deep-company/*");

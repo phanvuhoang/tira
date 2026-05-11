@@ -2,6 +2,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { initDb, isDbEnabled } from "./db";
+import { bootstrapDb } from "./db/bootstrap";
 
 const app = express();
 const httpServer = createServer(app);
@@ -60,6 +62,19 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // ➜ Khởi tạo kết nối DB (nếu có DATABASE_URL). Nếu không → rơi về JSON fallback.
+  await initDb();
+  if (isDbEnabled()) {
+    try {
+      await bootstrapDb();
+      log("DB ready (Postgres) — schema ensured & seed import done", "db");
+    } catch (e: any) {
+      console.error("[db] bootstrap failed, will keep DB enabled but tables may be missing:", e?.message);
+    }
+  } else {
+    log("DATABASE_URL không set — dùng JSON fallback (data/*.json)", "db");
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

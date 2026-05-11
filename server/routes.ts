@@ -11,6 +11,7 @@ import { calculateTiraIndicators } from "./tira-engine";
 import { loadUsers, login, register, verifyToken, getAllUsers, updateUserRole, deleteUser, resetPassword, authMiddleware, requireRole } from "./auth";
 import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore, calculateYearScore, calculateMultiYearScore, calcRiskSeverity } from "./risk-scoring";
 import { registerDeepCompanyRoutes } from "./deep-company/routes";
+import { reportsRepo, analysesRepo } from "./db/repositories";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -1076,8 +1077,8 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
   // FEATURE 2: Report History (JSON file persistence)
   // ════════════════════════════════════════════════════════════
 
-  // Save a report
-  app.post("/api/reports/save", (req: Request, res: Response) => {
+  // Save a report (DB-backed via reportsRepo, JSON fallback if no DATABASE_URL)
+  app.post("/api/reports/save", async (req: Request, res: Response) => {
     try {
       const { name, ticker, date, type, report_type, content, analysis_params } = req.body;
 
@@ -1093,7 +1094,7 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
         if (p) userId = p.id;
       }
 
-      const record: ReportRecord = {
+      const record = {
         id: uuidv4(),
         name:
           name ||
@@ -1103,13 +1104,12 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
         ticker,
         created_at: new Date().toISOString(),
         report_type: type || report_type || "financial",
-        content,
+        content: content ?? null,
         analysis_params: analysis_params || {},
         user_id: userId,
       };
 
-      reportHistory.push(record);
-      saveHistory(reportHistory);
+      await reportsRepo.insert(record);
 
       res.json({ success: true, id: record.id, record });
     } catch (error: any) {
@@ -1117,40 +1117,48 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
     }
   });
 
-  // List all reports
-  app.get("/api/reports", (req: Request, res: Response) => {
-    // Filter by user
-    const authH2 = req.headers.authorization;
-    let filteredReports = reportHistory;
-    if (authH2?.startsWith("Bearer ")) {
-      const p = verifyToken(authH2.slice(7));
-      if (p && p.role !== "admin") {
-        filteredReports = reportHistory.filter(r => r.user_id === p.id || r.user_id === "anonymous");
+  // List all reports (DB-backed)
+  app.get("/api/reports", async (req: Request, res: Response) => {
+    try {
+      let userId: string | undefined;
+      let isAdmin = false;
+      const authH2 = req.headers.authorization;
+      if (authH2?.startsWith("Bearer ")) {
+        const p = verifyToken(authH2.slice(7));
+        if (p) {
+          userId = p.id;
+          isAdmin = p.role === "admin";
+        }
+      } else {
+        // No auth: behave as admin view (matches previous JSON-flow which returned all)
+        isAdmin = true;
       }
-    }
 
-    // Return list sorted newest first, without heavy content field but with has_content flag
-    const items = filteredReports
-      .slice()
-      .sort(
-        (a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )
-      .map(r => ({
+      const filtered = await reportsRepo.listForUser({ userId, isAdmin });
+
+      // Strip heavy `content` from list, keep has_content flag
+      const items = filtered.map((r) => ({
         ...r,
         has_content: !!r.content && r.content.length > 0,
-        content: undefined, // Don't send content in list
+        content: undefined,
       }));
-    res.json(items);
+      res.json(items);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Internal error" });
+    }
   });
 
-  // Get a specific report
-  app.get("/api/reports/:id", (req: Request, res: Response) => {
-    const record = reportHistory.find((r) => r.id === req.params.id);
-    if (!record) {
-      return res.status(404).json({ error: "Report not found" });
+  // Get a specific report (DB-backed)
+  app.get("/api/reports/:id", async (req: Request, res: Response) => {
+    try {
+      const record = await reportsRepo.getById(String(req.params.id));
+      if (!record) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+      res.json(record);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Internal error" });
     }
-    res.json(record);
   });
 
   // Chart data for AI reports
@@ -1189,15 +1197,15 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
     res.json({ charts });
   });
 
-  // Delete a report
-  app.delete("/api/reports/:id", (req: Request, res: Response) => {
-    const idx = reportHistory.findIndex((r) => r.id === req.params.id);
-    if (idx === -1) {
-      return res.status(404).json({ error: "Report not found" });
+  // Delete a report (DB-backed)
+  app.delete("/api/reports/:id", async (req: Request, res: Response) => {
+    try {
+      const ok = await reportsRepo.delete(String(req.params.id));
+      if (!ok) return res.status(404).json({ error: "Report not found" });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Internal error" });
     }
-    reportHistory.splice(idx, 1);
-    saveHistory(reportHistory);
-    res.json({ success: true });
   });
 
   // ════════════════════════════════════════════════════════════
@@ -1316,10 +1324,12 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
   // FEATURE 4: Save / Load Analysis Params
   // ════════════════════════════════════════════════════════════
 
-  // Save analysis
-  app.post("/api/analyses/save", (req: Request, res: Response) => {
+  // Save analysis (DB-backed)
+  app.post("/api/analyses/save", async (req: Request, res: Response) => {
     try {
       const { ticker, report_type, years, comparisons, percentile_low, percentile_high, name } = req.body;
+      if (!ticker) return res.status(400).json({ error: "Missing required field: ticker" });
+
       let userId = "anonymous";
       const authH = req.headers.authorization;
       if (authH?.startsWith("Bearer ")) {
@@ -1331,66 +1341,54 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
         id: uuidv4(),
         name: name || `${ticker} - ${new Date().toLocaleDateString("vi-VN")}`,
         ticker,
-        report_type,
-        years,
-        comparisons,
+        report_type: report_type || "financial",
+        years: Array.isArray(years) ? years : [],
+        comparisons: Array.isArray(comparisons) ? comparisons : [],
         percentile_low: percentile_low || 25,
         percentile_high: percentile_high || 75,
         user_id: userId,
         created_at: new Date().toISOString(),
       };
 
-      // Load existing analyses
-      const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
-      let analyses: any[] = [];
-      try {
-        if (fs.existsSync(analysesFile)) {
-          analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
-        }
-      } catch {}
-      analyses.unshift(analysis);
-      fs.writeFileSync(analysesFile, JSON.stringify(analyses, null, 2));
-
+      await analysesRepo.insert(analysis);
       res.json({ success: true, analysis });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // List analyses
-  app.get("/api/analyses", (req: Request, res: Response) => {
-    const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
-    let analyses: any[] = [];
+  // List analyses (DB-backed)
+  app.get("/api/analyses", async (req: Request, res: Response) => {
     try {
-      if (fs.existsSync(analysesFile)) {
-        analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
+      let userId: string | undefined;
+      let isAdmin = false;
+      const authH = req.headers.authorization;
+      if (authH?.startsWith("Bearer ")) {
+        const p = verifyToken(authH.slice(7));
+        if (p) {
+          userId = p.id;
+          isAdmin = p.role === "admin";
+        }
+      } else {
+        // No auth: return all (legacy JSON behavior)
+        isAdmin = true;
       }
-    } catch {}
-
-    // Filter by user
-    const authH = req.headers.authorization;
-    if (authH?.startsWith("Bearer ")) {
-      const p = verifyToken(authH.slice(7));
-      if (p && p.role !== "admin") {
-        analyses = analyses.filter((a: any) => a.user_id === p.id || a.user_id === "anonymous");
-      }
+      const list = await analysesRepo.listForUser({ userId, isAdmin });
+      res.json(list);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Internal error" });
     }
-
-    res.json(analyses);
   });
 
-  // Delete analysis
-  app.delete("/api/analyses/:id", (req: Request, res: Response) => {
-    const analysesFile = path.resolve(process.cwd(), "data", "saved_analyses.json");
-    let analyses: any[] = [];
+  // Delete analysis (DB-backed)
+  app.delete("/api/analyses/:id", async (req: Request, res: Response) => {
     try {
-      if (fs.existsSync(analysesFile)) {
-        analyses = JSON.parse(fs.readFileSync(analysesFile, "utf-8"));
-      }
-    } catch {}
-    analyses = analyses.filter((a: any) => a.id !== req.params.id);
-    fs.writeFileSync(analysesFile, JSON.stringify(analyses, null, 2));
-    res.json({ success: true });
+      const ok = await analysesRepo.delete(String(req.params.id));
+      if (!ok) return res.status(404).json({ error: "Analysis not found" });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Internal error" });
+    }
   });
 
   return httpServer;
