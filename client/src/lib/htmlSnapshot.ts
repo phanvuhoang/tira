@@ -414,6 +414,50 @@ ${interactiveScript}
 </html>`;
 }
 
+// ── Option 2: full interactive report (inlined React runtime) ──────
+export interface FullReportDocOptions {
+  title: string;
+  headerTitle: string;
+  headerSub: string;
+  fontsHref?: string;
+  bundleJs: string; // IIFE from /api/export/report-bundle
+  payload: unknown; // ReportPayload (embedded as JSON)
+}
+
+export function buildFullReportDocument(opts: FullReportDocOptions): string {
+  const { title, fontsHref, bundleJs, payload } = opts;
+  const appCss = collectDocumentCss();
+  return `<!DOCTYPE html>
+<html lang="vi" class="">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(title)}</title>
+${fontsHref ? `<link rel="stylesheet" href="${esc(fontsHref)}">` : ""}
+<style>${appCss}</style>
+<style>
+.tira-export-btn{position:fixed;right:22px;width:46px;height:46px;border-radius:50%;border:none;background:#028a39;color:#fff;font-size:18px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:50}
+.tira-export-print{bottom:80px}.tira-export-top{bottom:22px}
+@media print{.tira-export-btn{display:none!important}[role=tabpanel]{display:block!important}}
+</style>
+</head>
+<body class="bg-background text-foreground">
+<div id="tira-root"></div>
+<button class="tira-export-btn tira-export-print" onclick="window.print()" title="In báo cáo">🖨️</button>
+<button class="tira-export-btn tira-export-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Lên đầu">⬆️</button>
+<script type="application/json" id="tira-payload">${embedJson(payload)}</script>
+<script>${bundleJs}</script>
+<script>
+(function(){
+  var data = JSON.parse(document.getElementById('tira-payload').textContent);
+  if (window.TIRAReport) window.TIRAReport.render(document.getElementById('tira-root'), data);
+  else document.getElementById('tira-root').innerHTML = '<p style="padding:24px">Không tải được runtime.</p>';
+})();
+</script>
+</body>
+</html>`;
+}
+
 export function downloadHtmlFile(html: string, filename: string): void {
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);

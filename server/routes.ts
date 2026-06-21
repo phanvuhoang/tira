@@ -13,6 +13,7 @@ import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateComp
 import { registerDeepCompanyRoutes } from "./deep-company/routes";
 import { reportsRepo, analysesRepo } from "./db/repositories";
 import { buildHtmlReport, buildHtmlAiReport } from "./export-html";
+import { buildReportBundle } from "./report-bundle";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -1343,6 +1344,22 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
       res.send(html);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // GET /api/export/report-bundle — interactive React runtime (Option 2)
+  // Returns a self-contained IIFE bundle that the client inlines into the
+  // exported HTML for full offline interactivity.
+  app.get("/api/export/report-bundle", async (_req: Request, res: Response) => {
+    try {
+      const js = await buildReportBundle();
+      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(js);
+    } catch (err: any) {
+      res.status(501).json({
+        error: "Không build được report runtime: " + (err?.message || "unknown"),
+      });
     }
   });
 

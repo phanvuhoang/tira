@@ -38,6 +38,27 @@ async function buildAll() {
   console.log("building client...");
   await viteBuild();
 
+  console.log("building interactive report runtime...");
+  await esbuild({
+    entryPoints: ["client/src/report/entry.tsx"],
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    target: "es2020",
+    jsx: "automatic",
+    minify: true,
+    legalComments: "none",
+    outfile: "dist/report-runtime.js",
+    define: { "process.env.NODE_ENV": '"production"' },
+    loader: { ".css": "empty" },
+    alias: {
+      "@": "client/src",
+      "@shared": "shared",
+      "@assets": "attached_assets",
+    },
+    logLevel: "info",
+  });
+
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [

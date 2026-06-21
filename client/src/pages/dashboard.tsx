@@ -7,6 +7,7 @@ import {
   extractComparisonCharts,
   getFontsHref,
   buildSnapshotDocument,
+  buildFullReportDocument,
   downloadHtmlFile,
   type SnapshotSection,
   type InteractivePayload,
@@ -379,7 +380,7 @@ interface TiraIndicator {
   industry_p_high: number | null;
 }
 
-interface AnalysisResult {
+export interface AnalysisResult {
   target: {
     company: { ma_ck: string; ten_tv: string; nganh_2?: string };
     report_type: string;
@@ -851,6 +852,7 @@ export default function Dashboard() {
   const [showExportHtml, setShowExportHtml] = useState(false);
   const [exportIncludeAi, setExportIncludeAi] = useState(true);
   const [isExportingHtml, setIsExportingHtml] = useState(false);
+  const [exportMode, setExportMode] = useState<"vanilla" | "full">("full");
 
   // Load default weights from API
   const { data: defaultWeights } = useQuery({
@@ -1131,21 +1133,22 @@ export default function Dashboard() {
     }
   }, [result, summaryStats]);
 
-  // Export ALL dashboard tabs (content + charts) to a self-contained HTML.
-  // Strategy: render each tab live, snapshot its DOM (recharts SVGs serialize
-  // with measured dimensions), then inline the app's own CSS so the export
-  // looks exactly like the app.
-  const handleExportHtml = useCallback(async () => {
+  // Option 1 — lightweight vanilla snapshot export.
+  // Renders each tab live, snapshots its DOM (recharts SVGs serialize with
+  // measured dimensions), inlines the app's CSS. Drops 3 heavy/data-API tabs
+  // (Tính điểm rủi ro, Báo cáo tài chính, Phân tích BCTC).
+  const handleExportVanilla = useCallback(async () => {
     setIsExportingHtml(true);
     setShowExportHtml(false);
     const prevTab = activeTab;
+    const VANILLA_DROP = ["explanation", "financials", "fs-analysis"];
     try {
       const yrs: string[] = result?.target?.years || years;
       const companyName: string = result?.target?.company?.ten_tv || ticker;
       const allYrs: string[] = result?.target?.years || years;
       let comparisonCharts: Record<string, string> = {};
       const sections: SnapshotSection[] = [];
-      for (const tab of EXPORT_TABS) {
+      for (const tab of EXPORT_TABS.filter((t) => !VANILLA_DROP.includes(t.value))) {
         setActiveTab(tab.value);
         // wait for React commit + recharts layout/animation
         await waitForRender(700);
@@ -1194,6 +1197,71 @@ export default function Dashboard() {
       setIsExportingHtml(false);
     }
   }, [ticker, reportType, years, result, activeTab, exportIncludeAi, aiReportContent]);
+
+  // Option 2 — full interactive export. Inlines a React runtime bundle +
+  // embedded data so every tab (except Tính điểm rủi ro) is interactive offline.
+  const handleExportFull = useCallback(async () => {
+    if (!result) return;
+    setIsExportingHtml(true);
+    setShowExportHtml(false);
+    try {
+      const companyName = result.target?.company?.ten_tv || ticker;
+      const yrs = result.target?.years || years;
+
+      // Pre-fetch ALL financial data the offline views may need:
+      // every company × every year (+ the prior year for horizontal FS analysis).
+      const tickers = [
+        result.target.company.ma_ck,
+        ...Object.values(result.comparisons).map((c: any) => c.company.ma_ck),
+      ];
+      const yearSet = new Set<string>(yrs);
+      for (const y of yrs) yearSet.add(String(parseInt(y) - 1));
+      let finData: Record<string, Record<string, any>> = {};
+      try {
+        const fdRes = await apiRequest("POST", "/api/financial-data/batch", {
+          tickers,
+          reportType,
+          years: Array.from(yearSet),
+        });
+        finData = await fdRes.json();
+      } catch {
+        finData = {};
+      }
+
+      // Fetch the interactive React runtime bundle.
+      const bundleRes = await apiRequest("GET", "/api/export/report-bundle");
+      const bundleJs = await bundleRes.text();
+
+      const payload = {
+        result: { target: result.target, comparisons: result.comparisons },
+        weights: customWeights,
+        percentileLow,
+        percentileHigh,
+        aiReportHtml: exportIncludeAi && aiReportContent ? simpleMarkdownToHtml(aiReportContent) : null,
+        finData,
+      };
+
+      const html = buildFullReportDocument({
+        title: `TIRA Report — ${ticker}`,
+        headerTitle: `${companyName} (${ticker})`,
+        headerSub: `${reportType} · ${yrs.join(", ")}`,
+        fontsHref: getFontsHref(),
+        bundleJs,
+        payload,
+      });
+      downloadHtmlFile(html, `TIRA_${ticker}_full_${new Date().toISOString().slice(0, 10)}.html`);
+    } catch (err: any) {
+      console.error("Export full HTML error:", err);
+      alert("Không export được bản đầy đủ: " + (err?.message || "lỗi không xác định") + "\nThử lại với chế độ Gọn nhẹ (vanilla).");
+    } finally {
+      setIsExportingHtml(false);
+    }
+  }, [ticker, reportType, years, result, customWeights, percentileLow, percentileHigh, exportIncludeAi, aiReportContent]);
+
+  const handleExportRun = useCallback(() => {
+    if (exportMode === "full") return handleExportFull();
+    return handleExportVanilla();
+  }, [exportMode, handleExportFull, handleExportVanilla]);
 
   const handleGenerateAiReport = useCallback(async () => {
     if (!result) return;
@@ -1449,13 +1517,41 @@ export default function Dashboard() {
               Export Interactive HTML
             </DialogTitle>
             <DialogDescription>
-              Xuất <b>toàn bộ tất cả các tab</b> (bảng nhiệt, biểu đồ, so sánh, chi tiết,
-              phân tích, risk diagram, tính điểm RR, BCTC, phân tích BCTC…) ra một file HTML
-              duy nhất — trình bày giống hệt trong app, mở offline bằng trình duyệt.
+              Chọn chế độ xuất file HTML (mở offline bằng trình duyệt).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-4">
-            <label className="flex items-center gap-2 cursor-pointer">
+            <button
+              type="button"
+              onClick={() => setExportMode("full")}
+              data-testid="export-mode-full"
+              className={`w-full text-left rounded-lg border p-3 transition-colors ${exportMode === "full" ? "border-primary bg-primary/5" : "border-border hover:bg-accent/40"}`}
+            >
+              <div className="font-medium text-sm flex items-center gap-2">
+                <span className={`w-3.5 h-3.5 rounded-full border-2 ${exportMode === "full" ? "border-primary bg-primary" : "border-muted-foreground"}`} />
+                Đầy đủ tương tác (khuyến nghị)
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 ml-5">
+                Nhúng đầy đủ component React + dữ liệu → mọi select/filter/biểu đồ hoạt động y như app.
+                Giữ tất cả tab (trừ Tính điểm rủi ro). File lớn hơn, cần vài giây để build runtime.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setExportMode("vanilla")}
+              data-testid="export-mode-vanilla"
+              className={`w-full text-left rounded-lg border p-3 transition-colors ${exportMode === "vanilla" ? "border-primary bg-primary/5" : "border-border hover:bg-accent/40"}`}
+            >
+              <div className="font-medium text-sm flex items-center gap-2">
+                <span className={`w-3.5 h-3.5 rounded-full border-2 ${exportMode === "vanilla" ? "border-primary bg-primary" : "border-muted-foreground"}`} />
+                Gọn nhẹ (vanilla)
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 ml-5">
+                File nhẹ, JS thuần. Tương tác cơ bản (chọn năm/công ty ở So sánh & Chi tiết).
+                Bỏ 3 tab: Tính điểm rủi ro, Báo cáo tài chính, Phân tích BCTC.
+              </p>
+            </button>
+            <label className="flex items-center gap-2 cursor-pointer pt-1">
               <Checkbox
                 checked={exportIncludeAi}
                 onCheckedChange={(v) => setExportIncludeAi(!!v)}
@@ -1466,15 +1562,12 @@ export default function Dashboard() {
                 Bao gồm báo cáo AI {!aiReportContent && "(chưa tạo)"}
               </span>
             </label>
-            <p className="text-xs text-muted-foreground">
-              Quá trình xuất sẽ lần lượt mở từng tab để chụp nội dung — vui lòng đợi vài giây.
-            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowExportHtml(false)}>
               Huỷ
             </Button>
-            <Button onClick={handleExportHtml} disabled={isExportingHtml} className="gap-2">
+            <Button onClick={handleExportRun} disabled={isExportingHtml} className="gap-2">
               {isExportingHtml ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               {isExportingHtml ? "Đang xuất..." : "Tải HTML"}
             </Button>
@@ -1879,7 +1972,7 @@ export default function Dashboard() {
 }
 
 /* ========== HEATMAP VIEW (enhanced with median + charts) ========== */
-function HeatmapView({ result, percentileLow, percentileHigh }: { result: AnalysisResult; percentileLow: number; percentileHigh: number }) {
+export function HeatmapView({ result, percentileLow, percentileHigh }: { result: AnalysisResult; percentileLow: number; percentileHigh: number }) {
   const { target, comparisons } = result;
   const latestYear = target.years[0];
   const [medianChartYear, setMedianChartYear] = useState(target.years[0]);
@@ -2172,7 +2265,7 @@ const CustomRadarTooltip = ({ active, payload }: any) => {
   );
 };
 
-function ChartsView({ result }: { result: AnalysisResult }) {
+export function ChartsView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const latestYear = target.years[0];
   const indicators = target.indicators[latestYear] || [];
@@ -2524,7 +2617,7 @@ function ChartsView({ result }: { result: AnalysisResult }) {
 }
 
 /* ========== COMPARISON VIEW (enhanced with multi-year) ========== */
-function ComparisonView({ result }: { result: AnalysisResult }) {
+export function ComparisonView({ result }: { result: AnalysisResult }) {
   const { target, comparisons } = result;
   const compEntries = Object.entries(comparisons);
   const [selectedYears, setSelectedYears] = useState<string[]>(() => [target.years[0]]);
@@ -2708,7 +2801,7 @@ function ComparisonView({ result }: { result: AnalysisResult }) {
 }
 
 /* ========== DETAIL VIEW (enhanced with year + company selectors) ========== */
-function DetailView({ result }: { result: AnalysisResult }) {
+export function DetailView({ result }: { result: AnalysisResult }) {
   const { target, comparisons } = result;
   const compEntries = Object.entries(comparisons);
   const [selectedYears, setSelectedYears] = useState<string[]>(() => [target.years[0]]);
@@ -2882,7 +2975,7 @@ function DetailView({ result }: { result: AnalysisResult }) {
 }
 
 /* ========== ANALYSIS VIEW (new tab) ========== */
-function AnalysisView({ result }: { result: AnalysisResult }) {
+export function AnalysisView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const [analysisYear, setAnalysisYear] = useState(target.years[0]);
   const indicators = target.indicators[analysisYear] || [];
@@ -3235,7 +3328,7 @@ function calculateDeviation(indicator: TiraIndicator): { rr1Dev: number; rr2Dev:
   return { rr1Dev, rr2Dev, rr1Explain, rr2Explain };
 }
 
-function RiskHeatmapView({ result }: { result: AnalysisResult }) {
+export function RiskHeatmapView({ result }: { result: AnalysisResult }) {
   const { target } = result;
   const years = target.years;
 
@@ -3822,7 +3915,7 @@ function calcRecencyWeight(years: string[], yearIdx: number): number {
   return years.length - yearIdx * 0.5; // first (newest) = n, gap 0.5 between years
 }
 
-function RiskDiagramView({
+export function RiskDiagramView({
   result,
   weights,
 }: {
@@ -4611,7 +4704,7 @@ function RiskScoringEditor({
 }
 
 /* ========== FINANCIALS VIEW ========== */
-function FinancialsView({ result }: { result: AnalysisResult }) {
+export function FinancialsView({ result }: { result: AnalysisResult }) {
   const { target, comparisons } = result;
   const allCompanies = [
     { ma_ck: target.company.ma_ck, ten_tv: target.company.ten_tv },
@@ -4788,7 +4881,7 @@ function FinancialsView({ result }: { result: AnalysisResult }) {
 }
 
 /* ========== FS ANALYSIS VIEW ========== */
-function FSAnalysisView({ result }: { result: AnalysisResult }) {
+export function FSAnalysisView({ result }: { result: AnalysisResult }) {
   const { target, comparisons } = result;
   const allYears = target.years;
   const allCompanies = [
