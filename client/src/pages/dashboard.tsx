@@ -3,10 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
   waitForRender,
+  expandAllYears,
+  extractComparisonCharts,
   getFontsHref,
   buildSnapshotDocument,
   downloadHtmlFile,
   type SnapshotSection,
+  type InteractivePayload,
 } from "@/lib/htmlSnapshot";
 import { t, useLang, FS_LABELS, IS_KEYS, BS_KEYS, getLang } from "@/lib/i18n";
 import { getToken } from "@/lib/auth";
@@ -1139,15 +1142,29 @@ export default function Dashboard() {
     try {
       const yrs: string[] = result?.target?.years || years;
       const companyName: string = result?.target?.company?.ten_tv || ticker;
+      const allYrs: string[] = result?.target?.years || years;
+      let comparisonCharts: Record<string, string> = {};
       const sections: SnapshotSection[] = [];
       for (const tab of EXPORT_TABS) {
         setActiveTab(tab.value);
         // wait for React commit + recharts layout/animation
         await waitForRender(700);
+        // expand year multi-selects so snapshots/charts cover every year
+        await expandAllYears();
         const panel = document.querySelector(
           '#export-capture-root > div > [role="tabpanel"][data-state="active"]'
         ) as HTMLElement | null;
-        sections.push({ id: tab.value, label: tab.label, html: panel ? panel.innerHTML : "" });
+        const panelHtml = panel ? panel.innerHTML : "";
+
+        if (tab.value === "comparison") {
+          // re-rendered interactively from data; reuse captured per-year charts
+          comparisonCharts = extractComparisonCharts(panelHtml, allYrs);
+          sections.push({ id: tab.value, label: tab.label, kind: "comparison" });
+        } else if (tab.value === "detail") {
+          sections.push({ id: tab.value, label: tab.label, kind: "detail" });
+        } else {
+          sections.push({ id: tab.value, label: tab.label, html: panelHtml });
+        }
       }
 
       if (exportIncludeAi && aiReportContent) {
@@ -1158,12 +1175,16 @@ export default function Dashboard() {
         });
       }
 
+      const interactive: InteractivePayload | undefined = result
+        ? { result: result.target ? { target: result.target, comparisons: result.comparisons } : result, comparisonCharts }
+        : undefined;
       const html = buildSnapshotDocument({
         title: `TIRA Report — ${ticker}`,
         headerTitle: `${companyName} (${ticker})`,
         headerSub: `${reportType} · ${yrs.join(", ")}`,
         sections,
         fontsHref: getFontsHref(),
+        interactive,
       });
       downloadHtmlFile(html, `TIRA_${ticker}_${new Date().toISOString().slice(0, 10)}.html`);
     } catch (err) {
