@@ -16,6 +16,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,6 +44,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  FileCode,
   X,
   Loader2,
   Sparkles,
@@ -820,6 +822,11 @@ export default function Dashboard() {
   const [scoringYear, setScoringYear] = useState<string>("all");
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
   const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
+  // Interactive HTML export
+  const [showExportHtml, setShowExportHtml] = useState(false);
+  const [exportIncludeAi, setExportIncludeAi] = useState(true);
+  const [exportIncludeCharts, setExportIncludeCharts] = useState(true);
+  const [isExportingHtml, setIsExportingHtml] = useState(false);
 
   // Load default weights from API
   const { data: defaultWeights } = useQuery({
@@ -1100,6 +1107,37 @@ export default function Dashboard() {
     }
   }, [result, summaryStats]);
 
+  // Export interactive self-contained HTML dashboard
+  const handleExportHtml = useCallback(async () => {
+    setIsExportingHtml(true);
+    try {
+      const includeAi = exportIncludeAi && !!aiReportContent;
+      const res = await apiRequest("POST", "/api/export/html", {
+        ticker,
+        report_type: reportType,
+        years,
+        comparisons,
+        percentile_low: percentileLow,
+        percentile_high: percentileHigh,
+        include_ai_report: includeAi,
+        ai_report_html: includeAi ? simpleMarkdownToHtml(aiReportContent || "") : "",
+        include_charts: exportIncludeCharts,
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `TIRA_${ticker}_${new Date().toISOString().slice(0, 10)}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowExportHtml(false);
+    } catch (err) {
+      console.error("Export HTML error:", err);
+    } finally {
+      setIsExportingHtml(false);
+    }
+  }, [ticker, reportType, years, comparisons, percentileLow, percentileHigh, exportIncludeAi, exportIncludeCharts, aiReportContent]);
+
   const handleGenerateAiReport = useCallback(async () => {
     if (!result) return;
     setAiGenerating(true);
@@ -1320,6 +1358,16 @@ export default function Dashboard() {
             <Download className="w-4 h-4" />
             {isExporting ? "Đang xuất..." : "Tải báo cáo (PPTX)"}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setExportIncludeAi(!!aiReportContent); setShowExportHtml(true); }}
+            data-testid="button-export-html"
+            className="gap-2"
+          >
+            <FileCode className="w-4 h-4" />
+            Export HTML
+          </Button>
           {canEdit && (
             <Button
               variant="outline"
@@ -1334,6 +1382,51 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Export HTML Dialog */}
+      <Dialog open={showExportHtml} onOpenChange={setShowExportHtml}>
+        <DialogContent data-testid="dialog-export-html">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileCode className="w-5 h-5 text-primary" />
+              Export Interactive HTML
+            </DialogTitle>
+            <DialogDescription>
+              Tải về file HTML tương tác để xem trên trình duyệt (1 file, mở offline được).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                checked={exportIncludeAi}
+                onCheckedChange={(v) => setExportIncludeAi(!!v)}
+                disabled={!aiReportContent}
+                data-testid="checkbox-export-ai"
+              />
+              <span className={!aiReportContent ? "text-muted-foreground" : ""}>
+                Bao gồm báo cáo AI {!aiReportContent && "(chưa tạo)"}
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                checked={exportIncludeCharts}
+                onCheckedChange={(v) => setExportIncludeCharts(!!v)}
+                data-testid="checkbox-export-charts"
+              />
+              <span>Bao gồm biểu đồ tương tác</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportHtml(false)}>
+              Huỷ
+            </Button>
+            <Button onClick={handleExportHtml} disabled={isExportingHtml} className="gap-2">
+              {isExportingHtml ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              {isExportingHtml ? "Đang xuất..." : "Tải HTML"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* AI Report Dialog */}
       <Dialog open={aiReportOpen} onOpenChange={setAiReportOpen}>

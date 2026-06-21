@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   Save,
   FileSpreadsheet,
+  FileCode,
 } from "lucide-react";
 
 type Lvl = "red" | "yellow" | "green" | "gray";
@@ -435,6 +436,36 @@ export default function DeepCompanyPage() {
     }
   };
 
+  const [exportingHtml, setExportingHtml] = useState(false);
+  const exportReportHtml = async () => {
+    if (!report) return;
+    setExportingHtml(true);
+    try {
+      // Light text → HTML so the report renders cleanly in the export
+      const reportHtml =
+        '<pre style="white-space:pre-wrap;font-family:inherit;margin:0;font-size:14px;line-height:1.7">' +
+        report.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+        "</pre>";
+      const ticker = inputs?.meta?.mst || inputs?.meta?.tenCty || "report";
+      const res = await apiRequest("POST", "/api/export/html-report", {
+        ticker,
+        company_name: inputs?.meta?.tenCty || ticker,
+        report_html: reportHtml,
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `TIRA_AI_Report_${ticker}_${new Date().toISOString().slice(0, 10)}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Không xuất được HTML", description: err?.message, variant: "destructive" });
+    } finally {
+      setExportingHtml(false);
+    }
+  };
+
   const saveAnalysis = async () => {
     if (!analysis) return;
     try {
@@ -817,8 +848,19 @@ export default function DeepCompanyPage() {
         <TabsContent value="report">
           {report ? (
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">Báo cáo phân tích AI</CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportReportHtml}
+                  disabled={exportingHtml}
+                  data-testid="btn-export-html"
+                  className="gap-2"
+                >
+                  {exportingHtml ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCode className="w-4 h-4" />}
+                  Export HTML
+                </Button>
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed">{report}</pre>

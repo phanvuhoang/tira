@@ -12,6 +12,7 @@ import { loadUsers, login, register, verifyToken, getAllUsers, updateUserRole, d
 import { loadRiskWeights, getDefaultWeights, updateDefaultWeights, calculateCompositeScore, calculateYearScore, calculateMultiYearScore, calcRiskSeverity } from "./risk-scoring";
 import { registerDeepCompanyRoutes } from "./deep-company/routes";
 import { reportsRepo, analysesRepo } from "./db/repositories";
+import { buildHtmlReport, buildHtmlAiReport } from "./export-html";
 
 const upload = multer({ dest: "/tmp/uploads/" });
 
@@ -185,6 +186,38 @@ function runAnalysis(
     targetIndicators: targetResult,
     compResults,
   };
+}
+
+// Helper: build the same chart payload as POST /api/report-charts
+// (reused by the HTML export so charts render identically)
+function buildChartData(ticker: string, reportType: string, years: string[]) {
+  const finData = storage.getFinancialData(ticker, reportType);
+  if (!finData) return { charts: [] };
+
+  const charts: any[] = [];
+
+  const revenueTrend = years.map((y) => ({
+    year: y,
+    revenue: finData[y]?.["210"] || 0,
+    profit: finData[y]?.["260"] || 0,
+    tax: finData[y]?.["251"] || 0,
+  })).reverse();
+  charts.push({ type: "revenue_trend", title: "Xu hướng Doanh thu - Lợi nhuận - Thuế", data: revenueTrend });
+
+  const ratios = years.map((y) => {
+    const rev = finData[y]?.["210"] || 1;
+    const pbt = finData[y]?.["250"] || 0;
+    const tax = finData[y]?.["251"] || 0;
+    return {
+      year: y,
+      gross_margin: ((finData[y]?.["220"] || 0) / rev * 100).toFixed(1),
+      net_margin: ((finData[y]?.["260"] || 0) / rev * 100).toFixed(1),
+      etr: (Math.abs(tax) / Math.abs(pbt || 1) * 100).toFixed(1),
+    };
+  }).reverse();
+  charts.push({ type: "ratios", title: "Biên lợi nhuận và ETR", data: ratios });
+
+  return { charts };
 }
 
 // ─────────────────────────────────────────────
@@ -1253,6 +1286,88 @@ KHÔNG phân tích chỉ số an toàn. Viết đầy đủ, không cắt ngắn
     charts.push({ type: "ratios", title: "Biên lợi nhuận và ETR", data: ratios });
 
     res.json({ charts });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // Interactive HTML export (additive — PPTX/Word paths untouched)
+  // POST /api/export/html — full dashboard
+  // ════════════════════════════════════════════════════════════
+  app.post("/api/export/html", (req: Request, res: Response) => {
+    try {
+      const {
+        ticker,
+        report_type = "Parent",
+        years = [],
+        comparisons = [],
+        percentile_low = 25,
+        percentile_high = 75,
+        include_ai_report = false,
+        ai_report_html = "",
+        include_charts = true,
+      } = req.body;
+
+      if (!ticker) return res.status(400).json({ error: "Missing ticker" });
+
+      const analysis = runAnalysis(
+        ticker,
+        report_type,
+        years,
+        comparisons,
+        percentile_low,
+        percentile_high
+      );
+      if (!analysis) return res.status(404).json({ error: "Company not found" });
+
+      const chartData = include_charts
+        ? buildChartData(ticker, report_type, analysis.selectedYears)
+        : undefined;
+
+      const html = buildHtmlReport({
+        ticker,
+        companyName: analysis.company.ten_tv || ticker,
+        reportType: report_type,
+        years: analysis.selectedYears,
+        analysisData: {
+          target: analysis.targetIndicators,
+          comparisons: analysis.compResults,
+        },
+        chartData,
+        aiReportHtml: include_ai_report && ai_report_html ? ai_report_html : undefined,
+        percentileLow: percentile_low,
+        percentileHigh: percentile_high,
+      });
+
+      const filename = `TIRA_${ticker}_${report_type}_${new Date().toISOString().slice(0, 10)}.html`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(html);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
+  });
+
+  // POST /api/export/html-report — standalone AI report
+  app.post("/api/export/html-report", (req: Request, res: Response) => {
+    try {
+      const { ticker, company_name, report_html, chart_data } = req.body;
+      if (!ticker || !report_html) {
+        return res.status(400).json({ error: "Missing ticker or report_html" });
+      }
+
+      const html = buildHtmlAiReport({
+        ticker,
+        companyName: company_name || ticker,
+        reportHtml: report_html,
+        chartData: chart_data,
+      });
+
+      const filename = `TIRA_AI_Report_${ticker}_${new Date().toISOString().slice(0, 10)}.html`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(html);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Internal error" });
+    }
   });
 
   // Delete a report (DB-backed)

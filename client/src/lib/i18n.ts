@@ -41,6 +41,8 @@ const translations: Record<string, Record<Lang, string>> = {
   "home.analyze": { vi: "Phân tích TIRA", en: "Run TIRA Analysis" },
   "dash.back": { vi: "Quay lại", en: "Back" },
   "dash.exportPptx": { vi: "Tải báo cáo (PPTX)", en: "Export (PPTX)" },
+  "dash.exportHtml": { vi: "Export HTML", en: "Export HTML" },
+  "dash.exportHtmlDesc": { vi: "Tải về file HTML tương tác để xem trên trình duyệt", en: "Download an interactive HTML file to view in your browser" },
   "dash.aiReport": { vi: "Tạo báo cáo AI", en: "AI Report" },
   "dash.riskScore": { vi: "Điểm rủi ro (BQ)", en: "Risk Score (Avg)" },
   "tab.heatmap": { vi: "Bảng nhiệt", en: "Heatmap" },
