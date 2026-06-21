@@ -1,6 +1,13 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  waitForRender,
+  getFontsHref,
+  buildSnapshotDocument,
+  downloadHtmlFile,
+  type SnapshotSection,
+} from "@/lib/htmlSnapshot";
 import { t, useLang, FS_LABELS, IS_KEYS, BS_KEYS, getLang } from "@/lib/i18n";
 import { getToken } from "@/lib/auth";
 import { useAiModels } from "@/hooks/use-ai-models";
@@ -77,6 +84,21 @@ import {
 } from "recharts";
 
 /* ========== HELPER: Markdown to HTML ========== */
+// Tabs captured (in order) by the "Export HTML" snapshot. Values must match
+// the <TabsTrigger value> in the dashboard; labels are the export tab titles.
+const EXPORT_TABS: { value: string; label: string }[] = [
+  { value: "heatmap", label: "Bảng nhiệt so với trung vị" },
+  { value: "charts", label: "Biểu đồ & xu hướng chỉ số" },
+  { value: "comparison", label: "So sánh công ty" },
+  { value: "detail", label: "Chi tiết chỉ số" },
+  { value: "analysis", label: "Phân tích ý nghĩa chỉ số" },
+  { value: "risk-heatmap", label: "Biểu đồ nhiệt rủi ro" },
+  { value: "risk-diagram", label: "Risk Diagram" },
+  { value: "explanation", label: "Tính điểm rủi ro" },
+  { value: "financials", label: "Báo cáo tài chính" },
+  { value: "fs-analysis", label: "Phân tích BCTC (dọc, ngang)" },
+];
+
 function simpleMarkdownToHtml(md: string): string {
   if (!md) return "";
   // If already HTML (starts with < tag), clean it up
@@ -825,7 +847,6 @@ export default function Dashboard() {
   // Interactive HTML export
   const [showExportHtml, setShowExportHtml] = useState(false);
   const [exportIncludeAi, setExportIncludeAi] = useState(true);
-  const [exportIncludeCharts, setExportIncludeCharts] = useState(true);
   const [isExportingHtml, setIsExportingHtml] = useState(false);
 
   // Load default weights from API
@@ -1107,36 +1128,51 @@ export default function Dashboard() {
     }
   }, [result, summaryStats]);
 
-  // Export interactive self-contained HTML dashboard
+  // Export ALL dashboard tabs (content + charts) to a self-contained HTML.
+  // Strategy: render each tab live, snapshot its DOM (recharts SVGs serialize
+  // with measured dimensions), then inline the app's own CSS so the export
+  // looks exactly like the app.
   const handleExportHtml = useCallback(async () => {
     setIsExportingHtml(true);
+    setShowExportHtml(false);
+    const prevTab = activeTab;
     try {
-      const includeAi = exportIncludeAi && !!aiReportContent;
-      const res = await apiRequest("POST", "/api/export/html", {
-        ticker,
-        report_type: reportType,
-        years,
-        comparisons,
-        percentile_low: percentileLow,
-        percentile_high: percentileHigh,
-        include_ai_report: includeAi,
-        ai_report_html: includeAi ? simpleMarkdownToHtml(aiReportContent || "") : "",
-        include_charts: exportIncludeCharts,
+      const yrs: string[] = result?.target?.years || years;
+      const companyName: string = result?.target?.company?.ten_tv || ticker;
+      const sections: SnapshotSection[] = [];
+      for (const tab of EXPORT_TABS) {
+        setActiveTab(tab.value);
+        // wait for React commit + recharts layout/animation
+        await waitForRender(700);
+        const panel = document.querySelector(
+          '#export-capture-root > div > [role="tabpanel"][data-state="active"]'
+        ) as HTMLElement | null;
+        sections.push({ id: tab.value, label: tab.label, html: panel ? panel.innerHTML : "" });
+      }
+
+      if (exportIncludeAi && aiReportContent) {
+        sections.push({
+          id: "ai-report",
+          label: "Báo cáo AI",
+          html: `<div class="prose prose-sm max-w-none">${simpleMarkdownToHtml(aiReportContent)}</div>`,
+        });
+      }
+
+      const html = buildSnapshotDocument({
+        title: `TIRA Report — ${ticker}`,
+        headerTitle: `${companyName} (${ticker})`,
+        headerSub: `${reportType} · ${yrs.join(", ")}`,
+        sections,
+        fontsHref: getFontsHref(),
       });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `TIRA_${ticker}_${new Date().toISOString().slice(0, 10)}.html`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setShowExportHtml(false);
+      downloadHtmlFile(html, `TIRA_${ticker}_${new Date().toISOString().slice(0, 10)}.html`);
     } catch (err) {
       console.error("Export HTML error:", err);
     } finally {
+      setActiveTab(prevTab);
       setIsExportingHtml(false);
     }
-  }, [ticker, reportType, years, comparisons, percentileLow, percentileHigh, exportIncludeAi, exportIncludeCharts, aiReportContent]);
+  }, [ticker, reportType, years, result, activeTab, exportIncludeAi, aiReportContent]);
 
   const handleGenerateAiReport = useCallback(async () => {
     if (!result) return;
@@ -1392,7 +1428,9 @@ export default function Dashboard() {
               Export Interactive HTML
             </DialogTitle>
             <DialogDescription>
-              Tải về file HTML tương tác để xem trên trình duyệt (1 file, mở offline được).
+              Xuất <b>toàn bộ tất cả các tab</b> (bảng nhiệt, biểu đồ, so sánh, chi tiết,
+              phân tích, risk diagram, tính điểm RR, BCTC, phân tích BCTC…) ra một file HTML
+              duy nhất — trình bày giống hệt trong app, mở offline bằng trình duyệt.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-4">
@@ -1407,14 +1445,9 @@ export default function Dashboard() {
                 Bao gồm báo cáo AI {!aiReportContent && "(chưa tạo)"}
               </span>
             </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <Checkbox
-                checked={exportIncludeCharts}
-                onCheckedChange={(v) => setExportIncludeCharts(!!v)}
-                data-testid="checkbox-export-charts"
-              />
-              <span>Bao gồm biểu đồ tương tác</span>
-            </label>
+            <p className="text-xs text-muted-foreground">
+              Quá trình xuất sẽ lần lượt mở từng tab để chụp nội dung — vui lòng đợi vài giây.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowExportHtml(false)}>
@@ -1730,6 +1763,7 @@ export default function Dashboard() {
       </Card>
 
       {/* Tabs */}
+      <div id="export-capture-root">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="w-full justify-start flex-wrap h-auto gap-1 overflow-x-auto">
           <TabsTrigger value="heatmap" data-testid="tab-heatmap">Bảng nhiệt</TabsTrigger>
@@ -1784,6 +1818,7 @@ export default function Dashboard() {
           <FSAnalysisView result={result} />
         </TabsContent>
       </Tabs>
+      </div>
 
       {/* Risk Scoring Editor Panel - only show on relevant tabs */}
       {(activeTab === "risk-diagram" || activeTab === "explanation" || activeTab === "risk-heatmap") && (
